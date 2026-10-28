@@ -226,6 +226,14 @@ mvn -B test
 - **房态日历的横轴从营业日切割点起转**，不是 00:00 起。窗口是 `[dayCut, 次日 dayCut)`，
   块按 `block_start/block_end`（含清扫缓冲）定位，所以一段没人住的空档也可能画着块 ——
   那是缓冲，不是 bug。
+- **页面整片空白、控制台报 `Unhandled error during execution of render function at <某图标>`，
+  多半不是代码问题，是 Vite 的依赖预打包缓存脏了。** 反复改 `AppShell.vue` 这类被多处引用的
+  组件的 import 列表时容易触发。修法：
+  `rm -rf frontend/node_modules/.vite` 然后重启 dev server。
+  先确认端口没被上一个 vite 进程占着（它会静默改端口到 5174，你刷新的其实还是那个坏掉的 5173）。
+- **`mvn test` 不带 `clean` 时，删掉的资源文件在 `target/classes` 里的旧副本不会被清除** ——
+  删了个 `V3__x.sql` 又新建 `V3__y.sql`，Flyway 会报 "Found more than one migration with version 3"，
+  而源码目录里明明只有一个 V3。
 - Windows 控制台是 cp936，`mvn` 的中文报错会乱码；需要读结果时落到文件再用编辑器打开。
   Git Bash 里含空格的 PATH 条目（`C:\Program Files\...`）不能让 `java` 直接执行，
   但 Maven 走 `JAVA_HOME` 是好的 —— `scripts/env.sh` 已用 `cygpath` 转成 POSIX 形式。
