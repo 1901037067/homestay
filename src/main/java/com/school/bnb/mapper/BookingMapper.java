@@ -88,6 +88,14 @@ public interface BookingMapper extends BaseMapper<Booking> {
     int settleIfCheckedOut(@Param("id") Long id, @Param("amount") BigDecimal amount);
 
     /**
+     * 按 id 当前读。<b>与 {@code selectById} 的区别不是"加不加锁"，而是"读不读缓存"</b>：
+     * 同一事务里前面已经 selectById 过一次的话，再查同一个 id 可能直接命中 MyBatis 一级缓存，
+     * 拿到加锁之前的旧对象。凡是要基于"锁内最新状态"下判断的地方，都走这一个。
+     */
+    @Select("select * from booking where id = #{id} for update")
+    Booking findByIdForUpdate(@Param("id") Long id);
+
+    /**
      * 幂等回放用。当前读 —— 普通 SELECT 在 RR 下可能看不到另一笔刚提交的同 requestId 订单，
      * 那样幂等就形同虚设。
      */

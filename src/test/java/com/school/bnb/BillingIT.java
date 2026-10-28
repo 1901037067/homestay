@@ -11,6 +11,7 @@ import com.school.bnb.dto.PropertyReq;
 import com.school.bnb.dto.RateRuleReq;
 import com.school.bnb.dto.RoomReq;
 import com.school.bnb.dto.RoomTypeReq;
+import com.school.bnb.booking.BookingKernel;
 import com.school.bnb.entity.Bill;
 import com.school.bnb.entity.Booking;
 import com.school.bnb.entity.Room;
@@ -59,6 +60,7 @@ class BillingIT extends AbstractMysqlIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired BillMapper billMapper;
     @Autowired BookingMapper bookingMapper;
+    @Autowired BookingKernel kernel;
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
@@ -244,14 +246,12 @@ class BillingIT extends AbstractMysqlIT {
         assertThat(billMapper.findByBookingId(id)).isNull();
         assertThat(bookingMapper.selectById(id).getStatus()).isEqualTo(Booking.CONFIRMED);
 
-        // 在住期间也不行 —— 退房才知道到底住了多久
-        mockMvc.perform(post("/api/bookings/" + id + "/check-in").session(session))
-                .andExpect(status().isOk());
+        // 在住期间也不行 —— 退房才知道到底住了多久（时刻显式给，理由见 checkInAndOut）
+        kernel.checkIn(id, DAY.withHour(9));
         assertThat(json(post("/api/bookings/" + id + "/settle").session(session))
                 .path("code").asInt()).isEqualTo(3002);
 
-        mockMvc.perform(post("/api/bookings/" + id + "/check-out").session(session))
-                .andExpect(status().isOk());
+        kernel.checkOut(id, DAY.withHour(12), 0);
         assertThat(json(post("/api/bookings/" + id + "/settle").session(session))
                 .path("code").asInt()).isZero();
 
@@ -377,11 +377,17 @@ class BillingIT extends AbstractMysqlIT {
         return MAPPER.readTree(body).path("data").path("id").asLong();
     }
 
-    private void checkInAndOut(MockHttpSession session, long bookingId) throws Exception {
-        mockMvc.perform(post("/api/bookings/" + bookingId + "/check-in").session(session))
-                .andExpect(status().isOk());
-        mockMvc.perform(post("/api/bookings/" + bookingId + "/check-out").session(session))
-                .andExpect(status().isOk());
+    /**
+     * 入住/退房走内核并显式给时刻，而不是走 HTTP 接口。
+     *
+     * <p>两个原因：① HTTP 的 check-in/check-out 用 {@code now()}，而这里的订单一律是<b>昨天</b>的，
+     * 会撞上"到店时刻已过预订结束时刻"的新规则（该规则是对的，见 OccupancyTruthIT ⑩）；
+     * ② 计费要断言死金额，就必须钉住实际退房时刻，不能让 now() 决定。
+     * 结算仍然走 HTTP —— 那才是要验证的入口（含操作人）。
+     */
+    private void checkInAndOut(MockHttpSession session, long bookingId) {
+        kernel.checkIn(bookingId, DAY.withHour(9));
+        kernel.checkOut(bookingId, LocalDateTime.now(), 0);
     }
 
     /**
@@ -392,9 +398,9 @@ class BillingIT extends AbstractMysqlIT {
      * "晚走要补"会补出一整夜的费用，凡是断言死金额的用例都会被打飞。
      * 超时补收那条用例单独用不钉时刻的 {@link #checkInAndOut}，正好把这个分支测住。
      */
-    private void checkOutAt(MockHttpSession session, long bookingId, LocalDateTime at) throws Exception {
-        checkInAndOut(session, bookingId);
-        jdbc.update("update booking set actual_check_out = ? where id = ?", at, bookingId);
+    private void checkOutAt(MockHttpSession session, long bookingId, LocalDateTime at) {
+        kernel.checkIn(bookingId, DAY.withHour(9));
+        kernel.checkOut(bookingId, at, 0);
     }
 
     /**

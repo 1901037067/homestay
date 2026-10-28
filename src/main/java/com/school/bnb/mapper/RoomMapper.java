@@ -10,16 +10,23 @@ import org.apache.ibatis.annotations.Select;
 public interface RoomMapper extends BaseMapper<Room> {
 
     /**
-     * 房间行悲观锁 —— 防超卖的地基（实施计划 3.2 / 1.1）。
+     * 房间行悲观锁 —— 防超卖的地基（实施计划 3.2 / 1.1），<b>同时把锁里的那一行读回来</b>。
      *
      * <p>MyBatis-Plus 的 {@code BaseMapper} 不提供 FOR UPDATE，{@code selectById} 也绝不加锁，
-     * 所以这个方法必须手写。返回 id 而不是整行，是为了让锁的语义在 SQL 上一眼可见。
+     * 所以这个方法必须手写。
+     *
+     * <p><b>为什么返回整行而不是只返回 id：</b>拿到锁之后往往还要判断"这间房现在是不是在售"。
+     * 若再调一次 {@code selectById}，可能直接命中 MyBatis 的<b>一级缓存</b> ——
+     * 同一事务、同一条语句、同样的参数，返回的是加锁<b>之前</b>读到的那个对象。
+     * 而加锁前的那次读正是 {@code BookingService.ctx()} 干的（它要取缓冲和起步时长）。
+     * 于是"加锁后重新查询"看起来刷新了，其实拿到的是旧值：房间刚被改成维修也照样放行。
+     * 一条语句同时完成"加锁"和"读最新行"，这个陷阱就不存在了。
      *
      * <p>拿到返回值 == 当前事务独占该房间的写入权；返回 null 表示房间不存在
      * （此时 InnoDB 锁的是间隙，事务照常提交，锁随即释放）。
      */
-    @Select("select id from room where id = #{roomId} for update")
-    Long selectForUpdate(@Param("roomId") Long roomId);
+    @Select("select * from room where id = #{roomId} for update")
+    Room selectForUpdate(@Param("roomId") Long roomId);
 
     /**
      * 某时间窗内仍可整段卖出的房间。用 NOT EXISTS 一条 SQL 搞定，

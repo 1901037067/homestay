@@ -36,7 +36,11 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class OperationLogIT extends AbstractMysqlIT {
 
-    private static final LocalDateTime DAY = LocalDateTime.now().minusDays(1).toLocalDate().atStartOfDay();
+    /**
+     * 用"今天整天"的窗口：入住接口用的是 {@code now()}，而"到店时刻已过预订结束时刻"会被拒
+     * （那条规则见 OccupancyTruthIT ⑩）。00:00–23:59 能把任意时刻的 now() 包进去。
+     */
+    private static final LocalDateTime DAY = LocalDateTime.now().toLocalDate().atStartOfDay();
 
     @Autowired MockMvc mockMvc;
     @Autowired OperationLogService logService;
@@ -65,13 +69,13 @@ class OperationLogIT extends AbstractMysqlIT {
         return roomService.save(new RoomReq(null, p.id(), tid, "R" + tag, 1, Room.ON_SALE));
     }
 
-    private long createBooking(MockHttpSession session, Room room, int from, int to) throws Exception {
+    private long createBooking(MockHttpSession session, Room room) throws Exception {
         String body = mockMvc.perform(post("/api/bookings")
                         .session(session)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"roomId\":" + room.getId() + ",\"guestName\":\"日志客人\","
-                                + "\"startTime\":\"" + DAY.withHour(from) + ":00\","
-                                + "\"endTime\":\"" + DAY.withHour(to) + ":00\","
+                                + "\"startTime\":\"" + DAY.withHour(0) + "\","
+                                + "\"endTime\":\"" + DAY.withHour(23).withMinute(59) + "\","
                                 + "\"saleType\":\"HOURLY\"}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
@@ -90,7 +94,7 @@ class OperationLogIT extends AbstractMysqlIT {
     void lifecycleIsAuditedWithActor() throws Exception {
         MockHttpSession session = login();
         Room room = room();
-        long id = createBooking(session, room, 9, 12);
+        long id = createBooking(session, room);
 
         mockMvc.perform(post("/api/bookings/" + id + "/check-in").session(session)).andExpect(status().isOk());
         mockMvc.perform(post("/api/bookings/" + id + "/check-out").session(session)).andExpect(status().isOk());
@@ -113,7 +117,7 @@ class OperationLogIT extends AbstractMysqlIT {
     void beforeAndAfterDiffer() throws Exception {
         MockHttpSession session = login();
         Room room = room();
-        long id = createBooking(session, room, 9, 12);
+        long id = createBooking(session, room);
         mockMvc.perform(post("/api/bookings/" + id + "/check-in").session(session)).andExpect(status().isOk());
 
         OperationLog row = logService.page(1, 50, "BOOKING_CHECK_IN", "booking", id, null)
@@ -147,7 +151,7 @@ class OperationLogIT extends AbstractMysqlIT {
     void cancelIsAudited() throws Exception {
         MockHttpSession session = login();
         Room room = room();
-        long id = createBooking(session, room, 9, 12);
+        long id = createBooking(session, room);
         mockMvc.perform(post("/api/bookings/" + id + "/cancel").session(session)).andExpect(status().isOk());
 
         assertThat(actionsOf(id)).contains("BOOKING_CANCEL");

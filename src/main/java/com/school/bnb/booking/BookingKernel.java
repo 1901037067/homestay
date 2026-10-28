@@ -207,9 +207,8 @@ public class BookingKernel {
     @Transactional
     public Booking checkIn(Long bookingId, LocalDateTime actual) {
         Booking booking = require(bookingId);
-        roomMapper.selectForUpdate(booking.getRoomId());
-        // 状态在锁之后读，避免用一份可能过期的快照下判断
-        Room room = roomMapper.selectById(booking.getRoomId());
+        // 锁 + 读最新行一次完成：再单独 selectById 会命中一级缓存，读回加锁前的旧对象
+        Room room = roomMapper.selectForUpdate(booking.getRoomId());
         if (room == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + booking.getRoomId());
         }
@@ -217,27 +216,41 @@ public class BookingKernel {
             throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
                     "房间 " + room.getRoomNo() + " 当前状态 " + room.getStatus() + "，不能办理入住");
         }
-
-        LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
-        if (bookingMapper.checkInIfConfirmed(bookingId, at) == 0) {
-            throw illegal(booking.getStatus(), Booking.IN_USE);
+        // 同理：订单的 end_time 要读锁内最新值，否则并发改期后可能拿旧时段做判断
+        Booking fresh = bookingMapper.findByIdForUpdate(bookingId);
+        if (fresh == null) {
+            throw new BizException(ErrorCode.BOOKING_NOT_FOUND, "订单不存在: " + bookingId);
         }
 
+        LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
+        // 整段预订都已经过去就没得"入住"了：B 单 10:00–12:00、客人 14:00 才到，
+        // 此刻房间里可能已经住着 13:00 开单的 A —— 只按 [10:00, 12:30) 检查是查不出人的。
+        // 这条是外部审阅指出、我核对后确认的真实缺陷：闸门的位置对了，但窗口用的是历史值。
+        if (!at.isBefore(fresh.getEndTime())) {
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE,
+                    "该预订时段 " + fresh.getStartTime() + " → " + fresh.getEndTime()
+                            + " 已经结束，无法直接入住；请改期或重新开单");
+        }
+        if (bookingMapper.checkInIfConfirmed(bookingId, at) == 0) {
+            throw illegal(fresh.getStatus(), Booking.IN_USE);
+        }
+
+        // 区间一律用锁内读到的 fresh，不用方法开头的 booking（那是加锁前的快照）
         Occupancy blk = occupancyMapper.findRoomBlock(bookingId);
-        LocalDateTime plannedStart = blk == null ? booking.getStartTime() : blk.getBlockStart();
-        LocalDateTime blockEnd = blk == null ? booking.getEndTime() : blk.getBlockEnd();
+        LocalDateTime plannedStart = blk == null ? fresh.getStartTime() : blk.getBlockStart();
+        LocalDateTime blockEnd = blk == null ? fresh.getEndTime() : blk.getBlockEnd();
         LocalDateTime effectiveStart = at.isBefore(plannedStart) ? at : plannedStart;
 
         // 先删自己再查 —— 排除自己最省事也最不会漏的写法（与改期同一套路）。
         // 检测不过会抛异常，这次删除随事务回滚，旧占用原样保留
         occupancyMapper.deleteByBookingId(bookingId);
-        if (!occupancyMapper.lockOverlapping(booking.getRoomId(), effectiveStart, blockEnd).isEmpty()) {
+        if (!occupancyMapper.lockOverlapping(fresh.getRoomId(), effectiveStart, blockEnd).isEmpty()) {
             throw new BizException(ErrorCode.ROOM_TIME_CONFLICT,
                     "这间房此刻交接不了：可能上一位客人还没退房，或房间还在等清扫。"
                             + "请先办退房 / 点「清扫完成」，再给客人办入住");
         }
-        writeOccupancy(bookingId, booking.getRoomId(), booking.getStartTime(),
-                booking.getEndTime(), effectiveStart, blockEnd);
+        writeOccupancy(bookingId, fresh.getRoomId(), fresh.getStartTime(),
+                fresh.getEndTime(), effectiveStart, blockEnd);
         if (at.isBefore(plannedStart)) {
             log.info("提前入住 booking={} 占用前扩至 {}", booking.getBookingNo(), at);
         }

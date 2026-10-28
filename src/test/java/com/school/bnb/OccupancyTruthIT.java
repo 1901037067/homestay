@@ -14,6 +14,7 @@ import com.school.bnb.dto.RoomReq;
 import com.school.bnb.dto.RoomTypeReq;
 import com.school.bnb.entity.Booking;
 import com.school.bnb.entity.Room;
+import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.service.BookingService;
 import com.school.bnb.service.PropertyService;
 import com.school.bnb.service.RoomService;
@@ -48,6 +49,8 @@ class OccupancyTruthIT extends AbstractMysqlIT {
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
     @Autowired JdbcTemplate jdbc;
+    @Autowired RoomMapper roomMapper;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     private Room room(int minHours, int cleanBefore, int cleanAfter) {
         String tag = String.valueOf(System.nanoTime());
@@ -338,6 +341,61 @@ class OccupancyTruthIT extends AbstractMysqlIT {
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
+    }
+
+    @Test
+    @DisplayName("⑩ 整段预订都已经过去，就不能再办入住 —— 先改期或重开单")
+    void checkInIsRefusedWhenTheBookingWindowAlreadyEnded() {
+        Room r = room(2, 0, 0);
+        // B 订 10:00–12:00 一直没来；同一房间 A 订 13:00–16:00 并已入住
+        BookingVO b = book(r.getId(), TODAY.withHour(10), TODAY.withHour(12), "HOURLY", null);
+        BookingVO a = book(r.getId(), TODAY.withHour(13), TODAY.withHour(16), "HOURLY", null);
+        kernel.checkIn(a.id(), TODAY.withHour(13));
+
+        // 客人 14:00 才到。修复前只按 B 的历史窗口 [10:00, 12:30) 检测，查不到 A，于是"入住成功"，
+        // 两个人就同住一间房 —— 闸门位置对了，但用的窗口是历史值
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(14)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("这张单已经结束了，不该再被兑付")
+                .isEqualTo(ErrorCode.BOOKING_ILLEGAL_STATE);
+        assertThat(kernel.require(b.id()).getStatus()).isEqualTo(Booking.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("⑪ 恰好卡在结束时刻也算过期（半开区间）")
+    void checkInAtTheExactEndTimeIsRefused() {
+        Room r = room(2, 0, 0);
+        BookingVO b = book(r.getId(), TODAY.withHour(10), TODAY.withHour(12), "HOURLY", null);
+
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(12)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.BOOKING_ILLEGAL_STATE);
+    }
+
+    @Test
+    @DisplayName("⑫ 加锁后再 selectById 会命中一级缓存；锁查询本身必须返回最新行")
+    void selectForUpdateReadsThroughTheFirstLevelCache() {
+        Room r = room(2, 0, 0);
+        transactionTemplate.executeWithoutResult(status -> {
+            // 模拟 BookingService.ctx()：进内核之前先读一次房间
+            Room beforeLock = roomMapper.selectById(r.getId());
+            assertThat(beforeLock.getStatus()).isEqualTo(Room.ON_SALE);
+
+            // 模拟"另一个事务把房间改成维修并提交"
+            jdbc.update("update room set status = 'MAINTENANCE' where id = ?", r.getId());
+
+            // 同一条语句 + 同样的参数 → MyBatis 一级缓存直接返回加锁前的对象
+            assertThat(roomMapper.selectById(r.getId()).getStatus())
+                    .as("这就是那个坑：看起来重新查了，其实读的是缓存")
+                    .isEqualTo(Room.ON_SALE);
+
+            // 锁查询是另一条语句，必然走库 → 拿到最新行
+            assertThat(roomMapper.selectForUpdate(r.getId()).getStatus())
+                    .as("所以 checkIn 只认锁查询的返回值，不再补一次 selectById")
+                    .isEqualTo("MAINTENANCE");
+        });
     }
 
     // -------------------------- ⑧ 待清扫是确认式闸门，不是固定时段（第三轮审阅第 2 条）
