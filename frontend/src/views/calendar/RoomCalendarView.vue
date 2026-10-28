@@ -36,6 +36,7 @@
         <span class="legend__item"><i class="sw sw--held" />预占</span>
         <span class="legend__item"><i class="sw sw--confirmed" />已确认</span>
         <span class="legend__item"><i class="sw sw--inuse" />在住</span>
+        <span class="legend__item"><i class="sw sw--overstay" />超时未退房</span>
         <span class="legend__item"><i class="sw sw--free" />空闲（可点击开单）</span>
       </div>
     </div>
@@ -196,7 +197,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Refresh } from '@element-plus/icons-vue'
 import http from '../../api'
@@ -216,6 +217,19 @@ const formError = ref('')
 const form = reactive({
   room: null, mode: 'hourly', start: '14:00', hours: 3, guest: '', phone: '', requestId: ''
 })
+
+// 内容一变就换幂等键。retry 时内容没变 → 同一个键 → 后端回放原单；
+// 前台在弹窗里改了时段再提交 → 新键 → 开新单，而不是"返回旧单却提示新时段成功"。
+watch(
+  () => [form.room?.roomId, form.mode, form.start, form.hours],
+  () => {
+    if (bookDlg.value) form.requestId = newRequestId()
+  }
+)
+
+function newRequestId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `REQ-${Date.now()}-${Math.random()}`
+}
 
 const pad = (n) => String(n).padStart(2, '0')
 // 切割点小时直接从 windowStart 取，别去 parse(dayCutTime) —— 那是 "06:00:00"，
@@ -253,15 +267,34 @@ function cellSellable(room, offset) {
 
   const effStart = addMinutes(from, -(room.cleanBeforeMinutes || 0))
   const effEnd = addMinutes(from, (room.minHours || 1) * 60 + (room.cleanAfterMinutes || 0))
-  return !room.blocks.some((b) => parse(b.blockStart) < effEnd && parse(b.blockEnd) > effStart)
+  return !room.blocks.some((b) => conflicts(b, effStart, effEnd))
+}
+
+/**
+ * 与后端 lockOverlapping 同口径的两个条件：
+ * ① 区间相交；② 超时未退房 —— 已过计划离店块且请求触到那之后，才把未知时段也算占用。
+ * 未到期不拦，否则"客人 14:00 入住、先预卖今晚 20:00 之后"这种正常操作会被一起挡掉。
+ */
+function conflicts(b, from, to) {
+  const start = parse(b.blockStart)
+  const end = parse(b.blockEnd)
+  if (b.bookingStatus === 'IN_USE' && new Date() >= end && to > end) return true
+  return start < to && end > from
 }
 
 function blkClass(b) {
   return {
     'blk--held': b.bookingStatus === 'HELD',
     'blk--confirmed': b.bookingStatus === 'CONFIRMED',
-    'blk--inuse': b.bookingStatus === 'IN_USE'
+    'blk--inuse': b.bookingStatus === 'IN_USE',
+    // 超时未退房：红色必须有实际含义（仍有人住、已超时、可能影响后续单），
+    // 不是单纯换个颜色 —— 见 SellPolicy 与内核里对在住占用的处理
+    'blk--overstay': isOverstay(b)
   }
+}
+
+function isOverstay(b) {
+  return b.bookingStatus === 'IN_USE' && parse(b.endTime) < new Date()
 }
 
 /** 按分钟偏移换算成百分比；跨窗口右界的画到边，文案上标"延续次日" */
@@ -279,9 +312,17 @@ function rangeText(b) {
 
 function tip(b) {
   const mins = diffMinutes(parse(b.startTime), parse(b.endTime))
-  const buf = diffMinutes(parse(b.endTime), parse(b.blockEnd))
-  return `${b.guestName} · ${statusLabel(b.bookingStatus)} · ${rangeText(b)} · ${humanMinutes(mins)}`
-    + (buf > 0 ? `（含退房缓冲 ${buf} 分）` : '')
+  let text = `${b.guestName} · ${statusLabel(b.bookingStatus)} · ${rangeText(b)} · ${humanMinutes(mins)}`
+  if (isOverstay(b)) {
+    // 在住且已过计划离店时刻：block_end 被顶到"退房才知道"的哨兵值，不能拿它算缓冲
+    text += ` ｜ 已超时 ${humanMinutes(diffMinutes(parse(b.endTime), new Date()))}未退房，需人工沟通`
+  } else if (b.bookingStatus === 'IN_USE') {
+    text += ' ｜ 在住中，退房后才释放'
+  } else {
+    const buf = diffMinutes(parse(b.endTime), parse(b.blockEnd))
+    if (buf > 0) text += `（含退房缓冲 ${buf} 分）`
+  }
+  return text
 }
 
 const nowOffset = computed(() => {
@@ -335,7 +376,7 @@ function onCellClick(room, offset) {
     hours: 3,
     guest: '',
     phone: '',
-    requestId: (crypto.randomUUID ? crypto.randomUUID() : `REQ-${Date.now()}-${Math.random()}`)
+    requestId: newRequestId()
   })
   formError.value = ''
   bookDlg.value = true
@@ -453,6 +494,7 @@ onMounted(async () => {
 .sw--held { background: var(--bnb-warning); }
 .sw--confirmed { background: var(--bnb-accent); }
 .sw--inuse { background: var(--bnb-success); }
+.sw--overstay { background: repeating-linear-gradient(135deg, var(--bnb-danger), var(--bnb-danger) 3px, #a8000b 3px, #a8000b 6px); }
 .sw--free { background: var(--bnb-fill-secondary); }
 
 .grid-card {
@@ -575,6 +617,13 @@ onMounted(async () => {
 .blk--held { background: var(--bnb-warning); }
 .blk--confirmed { background: var(--bnb-accent); }
 .blk--inuse { background: var(--bnb-success); }
+/* 超时未退房：红色 + 斜纹，一眼区别于"正常在住" */
+.blk--overstay {
+  background: repeating-linear-gradient(
+    135deg, var(--bnb-danger), var(--bnb-danger) 8px,
+    color-mix(in srgb, var(--bnb-danger) 78%, black) 8px,
+    color-mix(in srgb, var(--bnb-danger) 78%, black) 16px);
+}
 
 .now {
   position: absolute;

@@ -80,6 +80,31 @@ public final class SellPolicy {
     }
 
     /**
+     * 加时是<b>另一套规则</b>，不能复用 {@link #check}。
+     *
+     * <p>原因：全日房的 check 要求区间<b>严格等于</b>房型模板，于是"把 12:00 退房延到 14:00"
+     * 会被当成"你没按模板下单"拒掉 —— 加时恰恰就是要偏离模板。
+     * 而钟点的"不许跨天""不少于起步时长"对加时也没意义（它只会变长）。
+     *
+     * <p>加时只需要两件事：必须变长，且当天结束的话不能推出可售窗口。
+     */
+    public static Verdict checkExtension(Rule r, LocalDateTime start,
+                                         LocalDateTime currentEnd, LocalDateTime newEnd) {
+        if (newEnd == null) {
+            return fail(ErrorCode.INVALID_TIME_RANGE, "必须指定加时后的结束时间");
+        }
+        if (!newEnd.isAfter(currentEnd)) {
+            return fail(ErrorCode.INVALID_TIME_RANGE,
+                    "加时后的结束时间必须晚于当前结束时间 " + currentEnd);
+        }
+        if (start.toLocalDate().equals(newEnd.toLocalDate()) && newEnd.toLocalTime().isAfter(r.closeTime())) {
+            return fail(ErrorCode.ROOM_NOT_ON_SALE,
+                    "加时后的结束时刻 " + newEnd.toLocalTime() + " 超出可售窗口 " + r.closeTime());
+        }
+        return Verdict.OK;
+    }
+
+    /**
      * 全日房模板的区间必须与服务端按房型算出来的完全一致。
      *
      * <p>这条同时干两件事：让"跨天就免起步时长"的漏洞失去意义（跨天的 HOURLY 上面已经拒了），

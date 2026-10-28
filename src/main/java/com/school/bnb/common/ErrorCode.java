@@ -27,6 +27,15 @@ public final class ErrorCode {
 
     public static final int INVALID_TIME_RANGE = 3004;
 
+    /**
+     * 同一个 requestId 带上了不同的房间/时段 —— 不能回放旧单，也不能当新单受理。
+     * 典型成因：第一次提交其实成功了但响应超时，前台在同一个弹窗里改了时段重试。
+     */
+    public static final int IDEMPOTENCY_CONFLICT = 3005;
+
+    /** 该房间仍有人在住（含超时未退房），不能开新单。 */
+    public static final int ROOM_OCCUPIED_BY_GUEST = 3006;
+
     private ErrorCode() {
     }
 }

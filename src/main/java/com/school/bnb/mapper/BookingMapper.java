@@ -63,9 +63,18 @@ public interface BookingMapper extends BaseMapper<Booking> {
                          @Param("start") LocalDateTime start,
                          @Param("end") LocalDateTime end);
 
-    /** 加时：只有在住单能加。 */
-    @Update("update booking set end_time = #{end} where id = #{id} and status = 'IN_USE'")
-    int extendIfInUse(@Param("id") Long id, @Param("end") LocalDateTime end);
+    /**
+     * 加时。<b>把原 end_time 写进 where 当 CAS</b> —— 两个加时请求先后执行时，
+     * 后一个若基于自己那份过期快照，就会把前一个的结果改回去（甚至改短）。
+     * 只认"当前库里就是这个 end"，否则返回 0 让调用方重读重试。
+     */
+    @Update("""
+            update booking set end_time = #{end}
+            where id = #{id} and status = 'IN_USE' and end_time = #{expectedEnd}
+            """)
+    int extendIfInUse(@Param("id") Long id,
+                      @Param("end") LocalDateTime end,
+                      @Param("expectedEnd") LocalDateTime expectedEnd);
 
     /**
      * 幂等回放用。当前读 —— 普通 SELECT 在 RR 下可能看不到另一笔刚提交的同 requestId 订单，

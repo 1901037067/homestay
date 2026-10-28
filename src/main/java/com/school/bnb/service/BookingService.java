@@ -103,7 +103,13 @@ public class BookingService {
     public BookingVO extend(Long bookingId, ExtendReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        assertSellable(ctx, b.getStartTime(), req.newEndTime(), parseSaleType(b.getSaleType()));
+        // 加时走独立规则：全日房复用下单策略会被"区间必须等于模板"挡住，
+        // 而加时本来就是要偏离模板
+        SellPolicy.Verdict v = SellPolicy.checkExtension(
+                rule(ctx.room(), ctx.type(), ctx.property()), b.getStartTime(), b.getEndTime(), req.newEndTime());
+        if (!v.sellable()) {
+            throw new BizException(v.code(), v.reason());
+        }
         return toVO(kernel.extend(bookingId, req.newEndTime(), ctx.type().getCleanAfterMinutes()), ctx);
     }
 

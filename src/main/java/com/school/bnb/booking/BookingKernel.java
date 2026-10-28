@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
@@ -67,8 +68,15 @@ public class BookingKernel {
         if (cmd.requestId() != null && !cmd.requestId().isBlank()) {
             Booking existing = bookingMapper.findByRequestIdForUpdate(cmd.requestId());
             if (existing != null) {
-                log.info("幂等回放 requestId={} → booking {}", cmd.requestId(), existing.getBookingNo());
-                return existing;
+                // 只认"同标识 + 同内容"。同标识不同内容不能回放 —— 典型场景是第一次提交其实
+                // 成功了但响应超时，前台在同一个弹窗里改了时段重试；直接回放旧单会让前端
+                // 把"新时段开单成功"报给用户，而库里存的是旧时段。
+                if (sameAsRequest(existing, cmd)) {
+                    log.info("幂等回放 requestId={} → booking {}", cmd.requestId(), existing.getBookingNo());
+                    return existing;
+                }
+                throw new BizException(ErrorCode.IDEMPOTENCY_CONFLICT,
+                        "该请求已开出一张不同内容的订单（" + existing.getBookingNo() + "），请重新发起");
             }
         }
 
@@ -132,14 +140,22 @@ public class BookingKernel {
     public Booking extend(Long bookingId, LocalDateTime newEnd, int cleanAfterMinutes) {
         Booking booking = require(bookingId);
         roomMapper.selectForUpdate(booking.getRoomId());
+        // 必须变长。这条在 W3 版本里有、重写时被我删掉了 —— 少了它，
+        // "加时到 17:00"（原单 14:00–18:00）会把入住变成缩短。
+        if (!newEnd.isAfter(booking.getEndTime())) {
+            throw new BizException(ErrorCode.INVALID_TIME_RANGE,
+                    "加时后的结束时间必须晚于当前结束时间 " + booking.getEndTime());
+        }
         occupancyMapper.deleteByBookingId(bookingId);
 
         LocalDateTime blockStart = booking.getStartTime();
         LocalDateTime blockEnd = newEnd.plusMinutes(cleanAfterMinutes);
         requireNoConflict(booking.getRoomId(), blockStart, blockEnd);
 
-        if (bookingMapper.extendIfInUse(bookingId, newEnd) == 0) {
-            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE, "只有在住订单可以加时");
+        // 把原 end 写进 where 当 CAS：两个加时请求先后执行时，后一个不能基于过期快照
+        // 把前一个的结果改回去
+        if (bookingMapper.extendIfInUse(bookingId, newEnd, booking.getEndTime()) == 0) {
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE, "订单状态或时段已变化，请刷新后重试");
         }
         writeOccupancy(bookingId, booking.getRoomId(), booking.getStartTime(), newEnd, blockStart, blockEnd);
         log.info("加时 booking={} → 至 {}", booking.getBookingNo(), newEnd);
@@ -159,12 +175,26 @@ public class BookingKernel {
         return require(bookingId);
     }
 
+    /**
+     * 入住。把占用块往前扩到<b>实际入住时刻</b>：
+     * 计划 14:00 入住、客人 10:00 就到了，那 10:00–14:00 也必须算已占用，
+     * 否则另一位前台能给这间房开一张 10:00–12:00 的钟点单。
+     *
+     * <p>"在住期间持续挡房"不在这里改 block_end，而是写在冲突查询的第二个条件里 ——
+     * 占用表要始终满足"行不重叠"这个不变量。
+     */
     @Transactional
     public Booking checkIn(Long bookingId, LocalDateTime actual) {
         Booking booking = require(bookingId);
         roomMapper.selectForUpdate(booking.getRoomId());
-        if (bookingMapper.checkInIfConfirmed(bookingId, actual == null ? LocalDateTime.now() : actual) == 0) {
+        LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
+        if (bookingMapper.checkInIfConfirmed(bookingId, at) == 0) {
             throw illegal(booking.getStatus(), Booking.IN_USE);
+        }
+        Occupancy blk = occupancyMapper.findRoomBlock(bookingId);
+        if (blk != null && at.isBefore(blk.getBlockStart())) {
+            blk.setBlockStart(at);
+            occupancyMapper.updateById(blk);
         }
         return require(bookingId);
     }
@@ -263,6 +293,14 @@ public class BookingKernel {
         if (start == null || end == null || !end.isAfter(start)) {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE, "end 必须严格晚于 start（半开区间 [start, end)）");
         }
+    }
+
+    /** 幂等内容比对：房间、时段、客人都一致，才算同一个请求。 */
+    private static boolean sameAsRequest(Booking existing, CreateBookingCmd cmd) {
+        return Objects.equals(existing.getRoomId(), cmd.roomId())
+                && Objects.equals(existing.getStartTime(), cmd.startTime())
+                && Objects.equals(existing.getEndTime(), cmd.endTime())
+                && Objects.equals(existing.getGuestName(), cmd.guestName());
     }
 
     private String nextBookingNo() {

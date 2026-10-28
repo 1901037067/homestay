@@ -23,17 +23,30 @@ public interface RoomMapper extends BaseMapper<Room> {
 
     /**
      * 某时间窗内仍可整段卖出的房间。用 NOT EXISTS 一条 SQL 搞定，
-     * 别在 Java 里对每个房间各发一次 countOverlap —— 那会变成 N+1。
+     * 别在 Java 里对每个房间各发一次冲突查询 —— 那会变成 N+1。
+     *
+     * <p><b>必须把新单自己的清扫缓冲一起算</b>。只比较请求的 start/end 会漏判：
+     * 已有块到 12:45，新单 13:00 入住、该房型入住前缓冲 30 分钟 → 新单实际 block 从 12:30 起，
+     * 真冲突；但按 13:00 比就返回"可售"，前端点了再被内核拒。缓冲挂在 room_type 上，
+     * 所以这里要 join 房型表，不能只在 Java 侧传一对固定区间进来。
      */
     @Select("""
             <script>
             select r.id, r.property_id, r.room_type_id, r.room_no, r.floor_no, r.status, r.created_at, r.updated_at
             from room r
+            join room_type rt on rt.id = r.room_type_id
             where r.status = 'ON_SALE'
             <if test="propertyId != null"> and r.property_id = #{propertyId} </if>
               and not exists (
                 select 1 from occupancy o
-                where o.room_id = r.id and o.block_start &lt; #{endTime} and o.block_end &gt; #{startTime}
+                join booking b on b.id = o.booking_id
+                where o.room_id = r.id
+                  and (
+                        (o.block_start &lt; date_add(#{endTime}, interval rt.clean_after_minutes minute)
+                         and o.block_end &gt; date_sub(#{startTime}, interval rt.clean_before_minutes minute))
+                     or (b.status = 'IN_USE' and now() &gt;= o.block_end
+                         and date_add(#{endTime}, interval rt.clean_after_minutes minute) &gt; o.block_end)
+                  )
               )
             order by r.property_id, r.room_no
             </script>
