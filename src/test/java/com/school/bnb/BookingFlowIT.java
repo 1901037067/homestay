@@ -79,7 +79,8 @@ class BookingFlowIT extends AbstractMysqlIT {
     @Test
     @DisplayName("完整流转 HELD→CONFIRMED→IN_USE→CHECKED_OUT，退房时释放占用行")
     void fullLifecycle() {
-        Room room = plainRoom();
+        // 带 45 分钟退房缓冲，才能验到"退房转清扫"这一步
+        Room room = fixture(LocalTime.of(8, 0), LocalTime.of(22, 0), 2, 0, 45);
         BookingVO held = bookingService.create(new CreateBookingReq(room.getId(), "预占客", null,
                 DAY.withHour(14), DAY.withHour(18), Booking.HELD, 15));
         assertThat(held.status()).isEqualTo(Booking.HELD);
@@ -94,7 +95,9 @@ class BookingFlowIT extends AbstractMysqlIT {
         BookingVO out = bookingService.checkOut(held.id());
         assertThat(out.status()).isEqualTo(Booking.CHECKED_OUT);
         assertThat(out.actualCheckOut()).isNotNull();
-        // 退房即删行：房间立刻可售，不保留"计划中的未来缓冲"
+        // 退房不是删空：留下 45 分钟清扫占用，保洁点完成才真正可售
+        assertThat(occupancyCount(room.getId())).as("清扫块").isEqualTo(1);
+        assertThat(bookingService.finishCleaning(room.getId())).isEqualTo(1);
         assertThat(occupancyCount(room.getId())).isZero();
     }
 

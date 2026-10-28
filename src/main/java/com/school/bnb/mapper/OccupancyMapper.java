@@ -58,6 +58,10 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
     @Delete("delete from occupancy where booking_id = #{bookingId}")
     int deleteByBookingId(@Param("bookingId") Long bookingId);
 
+    /** 清扫完成：按房间收尾，前台点的是"这间房打扫好了"，不关心是哪张单。 */
+    @Delete("delete from occupancy where room_id = #{roomId} and kind = 'CLEANING'")
+    int deleteCleaningByRoom(@Param("roomId") Long roomId);
+
     @Select("select id from occupancy where booking_id = #{bookingId} limit 1")
     Long findRoomIdByBookingId(@Param("bookingId") Long bookingId);
 

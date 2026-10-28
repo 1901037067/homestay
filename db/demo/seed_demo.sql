@@ -143,10 +143,12 @@ select b.room_id, b.id, b.start_time, b.end_time, b.start_time,
        date_add(b.end_time, interval 45 minute), 'ROOM'
 from booking b where b.booking_no = 'H20260301';
 
--- 自检：历史订单不该有占用行；今天/未来的该有
-select '历史订单残留占用行数（必须为 0）' as check_item, count(1) as n
+-- 自检：历史订单不该有房时间占用行；今天/未来的该有
+-- 只数 ROOM —— 退房后留下的 CLEANING 行是正常状态（W5 的清扫闭环）
+select '历史订单残留房占用行数（必须为 0）' as check_item, count(1) as n
 from occupancy o join booking b on b.id = o.booking_id
-where b.status in ('SETTLED', 'CHECKED_OUT', 'CANCELLED')
+where o.kind = 'ROOM'
+  and b.status in ('SETTLED', 'CHECKED_OUT', 'CANCELLED')
 union all
 select '当前占用行数', count(1) from occupancy
 union all

@@ -25,6 +25,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /** 房态日历数据源（W4）。重点验证营业日切割与跨零点占用。 */
 class CalendarIT extends AbstractMysqlIT {
@@ -36,6 +37,7 @@ class CalendarIT extends AbstractMysqlIT {
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
+    @Autowired JdbcTemplate jdbc;
 
     /**
      * 开一家店。open/close 给全天，是为了能订到凌晨时段 ——
@@ -115,10 +117,10 @@ class CalendarIT extends AbstractMysqlIT {
     }
 
     @Test
-    @DisplayName("退房与取消后，块从日历上消失")
+    @DisplayName("取消后块消失；退房后转成清扫块，点完成才真正消失")
     void blocksDisappearAfterRelease() {
         PropertyVO p = property(LocalTime.of(6, 0));
-        Room r = room(p.id(), 0);
+        Room r = room(p.id(), 30);   // 带退房缓冲，退房才会留下清扫块
         var b = bookingService.create(new CreateBookingReq(r.getId(), "张三", null,
                 DAY.atTime(14, 0), DAY.atTime(18, 0), Booking.CONFIRMED, null));
         assertThat(row(calendarService.calendar(p.id(), DAY), r.getId()).blocks()).hasSize(1);
@@ -130,7 +132,17 @@ class CalendarIT extends AbstractMysqlIT {
                 DAY.atTime(20, 0), DAY.atTime(22, 0), Booking.CONFIRMED, null));
         bookingService.checkIn(b2.id());
         bookingService.checkOut(b2.id());
-        assertThat(row(calendarService.calendar(p.id(), DAY), r.getId()).blocks()).isEmpty();
+
+        // 清扫块按<b>实际退房时刻</b>落库，而 checkOut 用的是 now() —— 本用例的订单排在 12 月，
+        // 所以它落在日历窗口之外。这里直接查表断言语义，不借日历窗口（那样会依赖运行时刻）。
+        assertThat(jdbc.queryForObject(
+                "select kind from occupancy where booking_id = ?", String.class, b2.id()))
+                .as("退房留下的是清扫占用，不是房时间占用")
+                .isEqualTo("CLEANING");
+
+        bookingService.finishCleaning(r.getId());
+        assertThat(jdbc.queryForObject("select count(1) from occupancy where room_id = ?",
+                Integer.class, r.getId())).isZero();
     }
 
     @Test

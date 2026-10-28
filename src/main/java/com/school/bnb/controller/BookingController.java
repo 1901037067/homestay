@@ -97,6 +97,12 @@ public class BookingController {
         return R.ok(service.extend(id, req));
     }
 
+    @Operation(summary = "清扫完成", description = "保洁收拾好后点这一下，房间才真正恢复可售")
+    @PostMapping("/rooms/{id}/cleaning-done")
+    public R<Integer> finishCleaning(@PathVariable("id") Long roomId) {
+        return R.ok(service.finishCleaning(roomId));
+    }
+
     @Operation(summary = "可售房间列表", description = "与下单走同一套 SellPolicy，不会出现查询说可售、下单被拒")
     @GetMapping("/rooms/availability")
     public R<List<RoomVO>> availableRooms(

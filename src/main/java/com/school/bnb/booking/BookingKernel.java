@@ -200,22 +200,50 @@ public class BookingKernel {
     }
 
     /**
-     * 退房即释放占用行（总纲 A）。
+     * 退房。<b>不是删空，而是把 ROOM 行换成 CLEANING 行</b>：
+     * {@code [实际退房时刻, +clean_after_minutes]}。
      *
-     * <p>删掉的是<b>含未来缓冲的整块</b>：客人 16:00 实际退房，而原单是 14:00–18:00 + 45min，
-     * 删行之后 16:00 起就可售。缓冲保护的是"计划中的翻台"，人已经走了，决定权交回前台。
-     * 要把清扫做成真正的闭环，做的是加分项 4（落 CLEANING 行 + 完成打点），
-     * 而不是在这里保留一行假占用。这条取舍要在前台界面上说清楚。
+     * <p>为什么：客人走了不等于房间能卖 —— 还没打扫。原先退房即删行，系统立刻显示可售，
+     * 前台只能靠脑子记哪些房没打扫，"可售"这个信号因此不可信。
+     * 现在保洁在前台点"清扫完成"（{@link #finishCleaning}）才真正释放。
+     *
+     * <p>缓冲时长仍来自房型配置，且 ROOM 行已删除，不存在 B1/B2 双算。
      */
     @Transactional
-    public Booking checkOut(Long bookingId, LocalDateTime actual) {
+    public Booking checkOut(Long bookingId, LocalDateTime actual, int cleanAfterMinutes) {
         Booking booking = require(bookingId);
         roomMapper.selectForUpdate(booking.getRoomId());
-        if (bookingMapper.checkOutIfInUse(bookingId, actual == null ? LocalDateTime.now() : actual) == 0) {
+        LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
+        if (bookingMapper.checkOutIfInUse(bookingId, at) == 0) {
             throw illegal(booking.getStatus(), Booking.CHECKED_OUT);
         }
         occupancyMapper.deleteByBookingId(bookingId);
+        if (cleanAfterMinutes > 0) {
+            Occupancy cleaning = new Occupancy();
+            cleaning.setRoomId(booking.getRoomId());
+            cleaning.setBookingId(bookingId);
+            cleaning.setStartTime(at);
+            cleaning.setEndTime(at.plusMinutes(cleanAfterMinutes));
+            cleaning.setBlockStart(at);
+            cleaning.setBlockEnd(at.plusMinutes(cleanAfterMinutes));
+            cleaning.setKind(Occupancy.KIND_CLEANING);
+            occupancyMapper.insert(cleaning);
+        }
         return require(bookingId);
+    }
+
+    /**
+     * 清扫完成：释放 CLEANING 行，房间真正可售。
+     *
+     * <p>按房间而不是按订单收尾 —— 前台在房态图上点的是"302 号房打扫好了"，
+     * 不关心那是上一位客人的哪张单。
+     */
+    @Transactional
+    public int finishCleaning(Long roomId) {
+        if (roomMapper.selectForUpdate(roomId) == null) {
+            throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + roomId);
+        }
+        return occupancyMapper.deleteCleaningByRoom(roomId);
     }
 
     @Transactional

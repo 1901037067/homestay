@@ -7,6 +7,7 @@ const RoomListView = () => import('./views/room/RoomListView.vue')
 const RoomTypeListView = () => import('./views/room/RoomTypeListView.vue')
 const PropertyListView = () => import('./views/room/PropertyListView.vue')
 const RoomCalendarView = () => import('./views/calendar/RoomCalendarView.vue')
+const OperationLogView = () => import('./views/system/OperationLogView.vue')
 
 // hash 模式：将来前端是静态资源托管，不需要服务端 rewrite
 const router = createRouter({
@@ -21,7 +22,8 @@ const router = createRouter({
         { path: 'calendar', component: RoomCalendarView },
         { path: 'rooms', component: RoomListView },
         { path: 'room-types', component: RoomTypeListView },
-        { path: 'properties', component: PropertyListView }
+        { path: 'properties', component: PropertyListView },
+        { path: 'logs', component: OperationLogView }
       ]
     }
   ]

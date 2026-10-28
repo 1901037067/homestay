@@ -53,16 +53,18 @@ public class BookingService {
     private final RoomTypeMapper roomTypeMapper;
     private final PropertyMapper propertyMapper;
     private final OccupancyMapper occupancyMapper;
+    private final OperationLogService opLog;
 
     public BookingService(BookingKernel kernel, BookingMapper bookingMapper, RoomMapper roomMapper,
                           RoomTypeMapper roomTypeMapper, PropertyMapper propertyMapper,
-                          OccupancyMapper occupancyMapper) {
+                          OccupancyMapper occupancyMapper, OperationLogService opLog) {
         this.kernel = kernel;
         this.bookingMapper = bookingMapper;
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.propertyMapper = propertyMapper;
         this.occupancyMapper = occupancyMapper;
+        this.opLog = opLog;
     }
 
     // ------------------------------------------------------------ 写操作
@@ -86,6 +88,10 @@ public class BookingService {
                 req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes(),
                 status, holdExpire, req.requestId(), type.name()));
+        opLog.record("BOOKING_CREATE", "booking", b.getId(),
+                String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
+                        b.getStartTime(), b.getEndTime(), b.getStatus()),
+                null, b);
         return toVO(b, ctx);
     }
 
@@ -93,10 +99,14 @@ public class BookingService {
     public BookingVO changeTimes(Long bookingId, ChangeTimesReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        // 沿用订单原本的售卖方式，不接受请求里带类型
         assertSellable(ctx, req.startTime(), req.endTime(), parseSaleType(b.getSaleType()));
-        return toVO(kernel.changeTimes(bookingId, req.startTime(), req.endTime(),
-                ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes()), ctx);
+        Booking after = kernel.changeTimes(bookingId, req.startTime(), req.endTime(),
+                ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes());
+        opLog.record("BOOKING_RESCHEDULE", "booking", bookingId,
+                String.format("%s %s｜改为 %s → %s", ctx.room().getRoomNo(), after.getBookingNo(),
+                        after.getStartTime(), after.getEndTime()),
+                snapshot(b), after);
+        return toVO(after, ctx);
     }
 
     @Transactional
@@ -110,31 +120,77 @@ public class BookingService {
         if (!v.sellable()) {
             throw new BizException(v.code(), v.reason());
         }
-        return toVO(kernel.extend(bookingId, req.newEndTime(), ctx.type().getCleanAfterMinutes()), ctx);
+        Booking after = kernel.extend(bookingId, req.newEndTime(), ctx.type().getCleanAfterMinutes());
+        opLog.record("BOOKING_EXTEND", "booking", bookingId,
+                String.format("%s %s｜离店从 %s 延到 %s", ctx.room().getRoomNo(), after.getBookingNo(),
+                        b.getEndTime(), after.getEndTime()),
+                snapshot(b), after);
+        return toVO(after, ctx);
     }
 
     @Transactional
     public BookingVO confirm(Long bookingId) {
         Booking b = kernel.require(bookingId);
-        return toVO(kernel.confirm(bookingId), ctx(b.getRoomId()));
+        Ctx ctx = ctx(b.getRoomId());
+        Booking after = kernel.confirm(bookingId);
+        opLog.record("BOOKING_CONFIRM", "booking", bookingId,
+                ctx.room().getRoomNo() + " " + after.getBookingNo() + " 预占转确认", snapshot(b), after);
+        return toVO(after, ctx);
     }
 
     @Transactional
     public BookingVO checkIn(Long bookingId) {
         Booking b = kernel.require(bookingId);
-        return toVO(kernel.checkIn(bookingId, LocalDateTime.now()), ctx(b.getRoomId()));
+        Ctx ctx = ctx(b.getRoomId());
+        Booking after = kernel.checkIn(bookingId, LocalDateTime.now());
+        opLog.record("BOOKING_CHECK_IN", "booking", bookingId,
+                String.format("%s %s｜%s 入住（计划 %s）", ctx.room().getRoomNo(), after.getBookingNo(),
+                        after.getGuestName(), after.getStartTime()),
+                snapshot(b), after);
+        return toVO(after, ctx);
     }
 
     @Transactional
     public BookingVO checkOut(Long bookingId) {
         Booking b = kernel.require(bookingId);
-        return toVO(kernel.checkOut(bookingId, LocalDateTime.now()), ctx(b.getRoomId()));
+        Ctx ctx = ctx(b.getRoomId());
+        Booking before = snapshot(b);
+        Booking after = kernel.checkOut(bookingId, LocalDateTime.now(),
+                ctx.type().getCleanAfterMinutes());
+        opLog.record("BOOKING_CHECK_OUT", "booking", bookingId,
+                String.format("%s 退房（%s），%s", ctx.room().getRoomNo(), after.getBookingNo(),
+                        ctx.type().getCleanAfterMinutes() > 0
+                                ? "转清扫 " + ctx.type().getCleanAfterMinutes() + " 分钟"
+                                : "无需清扫，直接可售"),
+                before, after);
+        return toVO(after, ctx);
+    }
+
+    /**
+     * 清扫完成。只删占用行、不改订单状态 —— 订单已经是 CHECKED_OUT 了。
+     * 所以这里不套状态机，但照样要拿房间行锁。
+     */
+    @Transactional
+    public int finishCleaning(Long roomId) {
+        Ctx ctx = ctx(roomId);
+        int n = kernel.finishCleaning(roomId);
+        if (n > 0) {
+            opLog.record("CLEANING_DONE", "room", roomId,
+                    ctx.room().getRoomNo() + " 清扫完成，恢复可售", null, null);
+        }
+        return n;
     }
 
     @Transactional
     public BookingVO cancel(Long bookingId) {
         Booking b = kernel.require(bookingId);
-        return toVO(kernel.cancel(bookingId), ctx(b.getRoomId()));
+        Ctx ctx = ctx(b.getRoomId());
+        Booking after = kernel.cancel(bookingId);
+        opLog.record("BOOKING_CANCEL", "booking", bookingId,
+                String.format("%s %s｜取消 %s → %s 的订单（%s）", ctx.room().getRoomNo(),
+                        after.getBookingNo(), after.getStartTime(), after.getEndTime(), after.getGuestName()),
+                snapshot(b), after);
+        return toVO(after, ctx);
     }
 
     // ------------------------------------------------------------ 读操作
@@ -280,6 +336,24 @@ public class BookingService {
     private BookingVO toVO(Booking b, Ctx ctx) {
         return BookingVO.of(b, ctx.room().getRoomNo(), ctx.room().getPropertyId(),
                 ctx.property().getName(), ctx.type().getName());
+    }
+
+    /**
+     * 日志要的是"改之前长什么样"。必须拷一份 —— {@code kernel} 里是就地改同一个实体对象，
+     * 直接把引用当 before 存进去，前后值会变成一模一样，审计等于白记。
+     */
+    private static Booking snapshot(Booking src) {
+        Booking c = new Booking();
+        c.setId(src.getId());
+        c.setBookingNo(src.getBookingNo());
+        c.setStatus(src.getStatus());
+        c.setStartTime(src.getStartTime());
+        c.setEndTime(src.getEndTime());
+        c.setActualCheckIn(src.getActualCheckIn());
+        c.setActualCheckOut(src.getActualCheckOut());
+        c.setHoldExpireAt(src.getHoldExpireAt());
+        c.setAmount(src.getAmount());
+        return c;
     }
 
     /** 列表页整批装配：房间/房型/民宿各查一次，不逐行查（一页 20 条会放大成 60 次查询）。 */

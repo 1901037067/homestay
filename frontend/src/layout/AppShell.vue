@@ -77,7 +77,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  House, Grid, Tickets, OfficeBuilding, ArrowDown, SwitchButton, Calendar
+  House, Grid, Tickets, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document
 } from '@element-plus/icons-vue'
 import { THEME_MODES, useTheme } from '../composables/useTheme'
 import http from '../api'
@@ -91,7 +91,8 @@ const nav = [
   { path: '/calendar', label: '房态日历', icon: Calendar, desc: '点空白格开单，块上画的是含清扫缓冲的占用' },
   { path: '/rooms', label: '房间', icon: OfficeBuilding, desc: '具体房间的增删改与上下架' },
   { path: '/room-types', label: '房型', icon: Tickets, desc: '定价、起步时长与清扫缓冲' },
-  { path: '/properties', label: '民宿', icon: House, desc: '门店与营业日切割点' }
+  { path: '/properties', label: '民宿', icon: House, desc: '门店与营业日切割点' },
+  { path: '/logs', label: '操作日志', icon: Document, desc: '谁在什么时候改了什么' }
 ]
 
 const current = computed(() => nav.find((n) => n.path === route.path))

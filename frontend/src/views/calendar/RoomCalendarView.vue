@@ -37,6 +37,7 @@
         <span class="legend__item"><i class="sw sw--confirmed" />已确认</span>
         <span class="legend__item"><i class="sw sw--inuse" />在住</span>
         <span class="legend__item"><i class="sw sw--overstay" />超时未退房</span>
+        <span class="legend__item"><i class="sw sw--cleaning" />待清扫（点一下释放）</span>
         <span class="legend__item"><i class="sw sw--free" />空闲（可点击开单）</span>
       </div>
     </div>
@@ -165,14 +166,17 @@
       </template>
     </el-dialog>
 
-    <!-- 占用详情 -->
-    <el-dialog v-model="detailDlg" title="占用详情" width="420">
-      <el-descriptions v-if="detail" :column="1" border>
+    <!-- 占用详情与流转操作 -->
+    <el-dialog v-model="detailDlg" title="占用详情" width="460">
+      <el-descriptions v-if="detail" :column="1" border size="small">
         <el-descriptions-item label="订单号">{{ detail.bookingNo }}</el-descriptions-item>
         <el-descriptions-item label="客人">{{ detail.guestName }}</el-descriptions-item>
         <el-descriptions-item label="状态">
           <span class="bnb-pill" :class="blkClass(detail)">
             <span class="bnb-pill__dot" />{{ statusLabel(detail.bookingStatus) }}
+          </span>
+          <span v-if="detail.kind === 'CLEANING'" class="bnb-pill bnb-pill--warning">
+            <span class="bnb-pill__dot" />待清扫
           </span>
         </el-descriptions-item>
         <el-descriptions-item label="业务时段">
@@ -182,15 +186,41 @@
           {{ fmtLocal(detail.blockStart) }} → {{ fmtLocal(detail.blockEnd) }}
         </el-descriptions-item>
       </el-descriptions>
+
+      <!-- 改期 / 加时：改完就地显示新的时段预览，别让人盲填 -->
+      <div v-if="editing" class="edit-box">
+        <el-date-picker
+          v-model="editStart"
+          type="datetime"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          placeholder="开始"
+          :disabled="editing === 'extend'"
+        />
+        <el-date-picker
+          v-model="editEnd"
+          type="datetime"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          placeholder="结束"
+        />
+        <p class="edit-hint bnb-muted">
+          {{ editing === 'extend' ? '加时只能往后推，且需重跑冲突检测' : '改期会删旧占用行后重新校验' }}
+        </p>
+        <p v-if="editError" class="edit-err">{{ editError }}</p>
+      </div>
+
       <template #footer>
-        <el-button @click="detailDlg = false">关闭</el-button>
-        <el-button
-          v-if="detail && ['HELD', 'CONFIRMED'].includes(detail.bookingStatus)"
-          type="danger"
-          plain
-          :loading="submitting"
-          @click="cancelBooking"
-        >取消订单</el-button>
+        <div class="dlg-actions">
+          <el-button @click="detailDlg = false">关闭</el-button>
+          <template v-if="!editing">
+            <el-button v-for="a in actionsFor(detail)" :key="a.cmd" :type="a.type" plain @click="run(a)">
+              {{ a.label }}
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button @click="editing = null">返回</el-button>
+            <el-button type="primary" :loading="submitting" @click="submitEdit">确定</el-button>
+          </template>
+        </div>
       </template>
     </el-dialog>
   </div>
@@ -214,6 +244,10 @@ const bookDlg = ref(false)
 const detailDlg = ref(false)
 const detail = ref(null)
 const formError = ref('')
+const editing = ref(null)          // null | 'reschedule' | 'extend'
+const editStart = ref('')
+const editEnd = ref('')
+const editError = ref('')
 const form = reactive({
   room: null, mode: 'hourly', start: '14:00', hours: 3, guest: '', phone: '', requestId: ''
 })
@@ -284,11 +318,12 @@ function conflicts(b, from, to) {
 
 function blkClass(b) {
   return {
-    'blk--held': b.bookingStatus === 'HELD',
-    'blk--confirmed': b.bookingStatus === 'CONFIRMED',
-    'blk--inuse': b.bookingStatus === 'IN_USE',
-    // 超时未退房：红色必须有实际含义（仍有人住、已超时、可能影响后续单），
-    // 不是单纯换个颜色 —— 见 SellPolicy 与内核里对在住占用的处理
+    'blk--held': b.kind !== 'CLEANING' && b.bookingStatus === 'HELD',
+    'blk--confirmed': b.kind !== 'CLEANING' && b.bookingStatus === 'CONFIRMED',
+    'blk--inuse': b.kind !== 'CLEANING' && b.bookingStatus === 'IN_USE',
+    'blk--cleaning': b.kind === 'CLEANING',
+    // 超时未退房：红色必须有实际含义（仍有人住、已超时、后续单会被挡），
+    // 不是单纯换个颜色
     'blk--overstay': isOverstay(b)
   }
 }
@@ -382,9 +417,91 @@ function onCellClick(room, offset) {
   bookDlg.value = true
 }
 
-function openDetail(b) {
+async function openDetail(b) {
   detail.value = b
+  editing.value = null
+  editError.value = ''
+  editStart.value = b.startTime
+  editEnd.value = b.endTime
   detailDlg.value = true
+}
+
+/** 按状态给出可做的动作。不在这里做判断，服务端状态机才是裁判。 */
+function actionsFor(b) {
+  if (!b) return []
+  if (b.kind === 'CLEANING') {
+    return [{ label: '清扫完成', cmd: 'clean', type: 'primary' }]
+  }
+  const map = {
+    HELD: [
+      { label: '确认', cmd: 'confirm', type: 'primary' },
+      { label: '取消', cmd: 'cancel', type: 'danger' }
+    ],
+    CONFIRMED: [
+      { label: '入住', cmd: 'check-in', type: 'primary' },
+      { label: '改期', cmd: 'edit-reschedule', type: 'default' },
+      { label: '取消', cmd: 'cancel', type: 'danger' }
+    ],
+    IN_USE: [
+      { label: '加时', cmd: 'edit-extend', type: 'default' },
+      { label: '退房', cmd: 'check-out', type: 'primary' }
+    ]
+  }
+  return map[b.bookingStatus] || []
+}
+
+async function run(a) {
+  if (a.cmd === 'edit-reschedule') {
+    editing.value = 'reschedule'
+    return
+  }
+  if (a.cmd === 'edit-extend') {
+    editing.value = 'extend'
+    return
+  }
+  submitting.value = true
+  try {
+    if (a.cmd === 'clean') {
+      const res = await http.post(`/rooms/${detail.value.roomId}/cleaning-done`)
+      ElMessage.success(res.data > 0 ? '已释放，房间恢复可售' : '没有待清扫的占用')
+    } else {
+      await http.post(`/bookings/${detail.value.bookingId}/${a.cmd}`)
+      ElMessage.success(`${a.label}完成`)
+    }
+    detailDlg.value = false
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function submitEdit() {
+  editError.value = ''
+  if (!editStart.value || !editEnd.value) {
+    editError.value = '开始与结束时间都要填'
+    return
+  }
+  submitting.value = true
+  try {
+    if (editing.value === 'reschedule') {
+      await http.put(`/bookings/${detail.value.bookingId}/times`, {
+        startTime: editStart.value, endTime: editEnd.value
+      })
+      ElMessage.success('已改期')
+    } else {
+      await http.post(`/bookings/${detail.value.bookingId}/extend`, { newEndTime: editEnd.value })
+      ElMessage.success('已加时')
+    }
+    detailDlg.value = false
+    await load()
+  } catch (e) {
+    // 冲突、状态不允许、超出可售窗口都留在弹窗里
+    editError.value = e?.message || '操作失败'
+  } finally {
+    submitting.value = false
+  }
 }
 
 async function submit() {
@@ -413,20 +530,6 @@ async function submit() {
   } catch (e) {
     // 冲突、起步时长不足、超出可售窗口都留在弹窗里说清楚
     formError.value = e?.message || '开单失败，请调整时段后重试'
-  } finally {
-    submitting.value = false
-  }
-}
-
-async function cancelBooking() {
-  submitting.value = true
-  try {
-    await http.post(`/bookings/${detail.value.bookingId}/cancel`)
-    ElMessage.success('已取消并释放该时段')
-    detailDlg.value = false
-    await load()
-  } catch {
-    /* 拦截器已提示 */
   } finally {
     submitting.value = false
   }
@@ -495,6 +598,7 @@ onMounted(async () => {
 .sw--confirmed { background: var(--bnb-accent); }
 .sw--inuse { background: var(--bnb-success); }
 .sw--overstay { background: repeating-linear-gradient(135deg, var(--bnb-danger), var(--bnb-danger) 3px, #a8000b 3px, #a8000b 6px); }
+.sw--cleaning { background: repeating-linear-gradient(45deg, var(--bnb-fill-secondary), var(--bnb-fill-secondary) 3px, var(--bnb-fill-tertiary) 3px, var(--bnb-fill-tertiary) 6px); }
 .sw--free { background: var(--bnb-fill-secondary); }
 
 .grid-card {
@@ -624,6 +728,13 @@ onMounted(async () => {
     color-mix(in srgb, var(--bnb-danger) 78%, black) 8px,
     color-mix(in srgb, var(--bnb-danger) 78%, black) 16px);
 }
+/* 待清扫：中性斜纹 —— 它不是"有人住"，是"能住但还没好" */
+.blk--cleaning {
+  background: repeating-linear-gradient(
+    45deg, var(--bnb-fill-secondary), var(--bnb-fill-secondary) 6px,
+    var(--bnb-fill-tertiary) 6px, var(--bnb-fill-tertiary) 12px);
+}
+.blk--cleaning .blk__inner { color: var(--bnb-text-secondary); }
 
 .now {
   position: absolute;

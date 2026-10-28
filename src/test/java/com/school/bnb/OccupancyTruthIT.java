@@ -89,18 +89,33 @@ class OccupancyTruthIT extends AbstractMysqlIT {
     }
 
     @Test
-    @DisplayName("① 退房之后才恢复可售（哨兵值必须被撤销，否则房间永久锁死）")
-    void checkOutRestoresSellability() {
+    @DisplayName("① 退房转清扫：ROOM 行没了但留下 CLEANING 行，保洁点完成才真正可售")
+    void checkOutHandsOverToCleaning() {
         Room r = room(2, 0, 30);
         BookingVO b = book(r.getId(), TODAY.withHour(9), TODAY.withHour(12), "HOURLY", null);
         kernel.checkIn(b.id(), TODAY.withHour(9));
         assertThat(occupancyRows(r.getId())).isEqualTo(1);
 
-        kernel.checkOut(b.id(), TODAY.withHour(12));
-        assertThat(occupancyRows(r.getId())).as("退房即释放").isZero();
+        kernel.checkOut(b.id(), TODAY.withHour(12), 30);
+        assertThat(rowsOfKind(r.getId(), "ROOM")).as("房时间占用已释放").isZero();
+        assertThat(rowsOfKind(r.getId(), "CLEANING")).as("转成清扫占用").isEqualTo(1);
 
-        // 13:00 现在可以开了
-        assertThat(book(r.getId(), TODAY.withHour(13), TODAY.withHour(16), "HOURLY", null)).isNotNull();
+        // 清扫期间 12:00–13:00 这一格还不能卖（12:00 起被清扫占住）
+        assertThatThrownBy(() -> book(r.getId(), TODAY.withHour(12), TODAY.withHour(14), "HOURLY", null))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        assertThat(bookingService.finishCleaning(r.getId())).isEqualTo(1);
+        assertThat(occupancyRows(r.getId())).isZero();
+        assertThat(book(r.getId(), TODAY.withHour(12), TODAY.withHour(14), "HOURLY", null)).isNotNull();
+    }
+
+    private int rowsOfKind(Long roomId, String kind) {
+        Integer n = jdbc.queryForObject(
+                "select count(1) from occupancy where room_id = ? and kind = ?",
+                Integer.class, roomId, kind);
+        return n == null ? 0 : n;
     }
 
     @Test

@@ -28,13 +28,16 @@ public class RoomService {
     private final RoomTypeMapper roomTypeMapper;
     private final BookingMapper bookingMapper;
     private final PropertyService propertyService;
+    private final OperationLogService opLog;
 
     public RoomService(RoomMapper roomMapper, RoomTypeMapper roomTypeMapper,
-                       BookingMapper bookingMapper, PropertyService propertyService) {
+                       BookingMapper bookingMapper, PropertyService propertyService,
+                       OperationLogService opLog) {
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.bookingMapper = bookingMapper;
         this.propertyService = propertyService;
+        this.opLog = opLog;
     }
 
     public Page<RoomVO> page(long pageNo, long pageSize, Long propertyId, Long roomTypeId,
@@ -106,8 +109,10 @@ public class RoomService {
             throw new BizException(ErrorCode.BAD_REQUEST, "状态不合法: " + status);
         }
         Room r = require(id);
+        String from = r.getStatus();
         r.setStatus(status);
         roomMapper.updateById(r);
+        opLog.record("ROOM_STATUS", "room", id, r.getRoomNo() + " 状态 " + from + " → " + status, from, status);
     }
 
     /** 房间一旦有过订单就不能物理删除，否则历史账单指向幽灵房间、报表口径全乱。 */

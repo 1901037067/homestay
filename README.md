@@ -97,14 +97,16 @@ GET  /api/properties     POST / PUT /{id} / DELETE /{id}
 GET  /api/room-types     ?propertyId=           POST / PUT /{id} / DELETE /{id}
 GET  /api/rooms          ?page&size&propertyId&roomTypeId&status&keyword
                          POST / PUT /{id} / PATCH /{id}/status / DELETE /{id}
-POST /api/bookings                下单（status 只接受 HELD / CONFIRMED）
+POST /api/bookings                下单（status 只接受 HELD / CONFIRMED；带 requestId 幂等）
 GET  /api/bookings                ?page&size&status&roomId&keyword&from&to
 GET  /api/bookings/{id}
 PUT  /api/bookings/{id}/times     改期：删旧占用→重跑冲突检测→插新占用，同一事务
 POST /api/bookings/{id}/confirm | /cancel | /check-in | /check-out | /extend
-GET  /api/rooms/availability      ?propertyId&start&end&minHours  → 可售房间
+POST /api/rooms/{id}/cleaning-done  保洁完成，释放清扫占用
+GET  /api/rooms/availability      ?propertyId&start&end&minHours&saleType → 可售房间
 GET  /api/rooms/{id}/availability ?start&end&minHours             → 空闲区间列表
 GET  /api/calendar                ?propertyId&date                → 房态日历数据源
+GET  /api/operation-logs          ?page&size&action&entity&entityId&username
 ```
 
 `/api/calendar` 的 `propertyId` 是必填：前台一次只看一家店，而营业日切割点是按店配置的，
@@ -138,9 +140,11 @@ W3 落地、W4 之后被一轮审阅修正。改这块代码前先看这段：
 `create`、`availableRooms`、日历格子可点三处共用同一口径（含新单自己的入住前缓冲），
 不会再出现"查询说可售、下单被拒"。
 
-**退房删掉的是含未来缓冲的整块。** 客人 16:00 实际退房、原单 14:00–18:00+45min，删行后 16:00 起就可售。
-缓冲保护的是"计划中的翻台"，人走了决定权交回前台；要做真闭环是加分项 4（落 `CLEANING` 行 + 完成打点），
-不是在这里留一行假占用。
+**退房不等于可售。** 退房时 `ROOM` 行被删掉、换上一行 `kind=CLEANING` 的
+`[实际退房时刻, +clean_after]`，保洁在前台点"清扫完成"才真正释放。
+原先"退房即删空"的做法会让系统立刻显示可售、而房间实际还没打扫，前台只能靠脑子记 ——
+"可售"这个信号就不可信了。需求方确认的流程是"保洁收拾好点一下，前台才知道能卖"，
+所以这条从加分项提为必做（W5）。`ROOM` 行与 `CLEANING` 行是接力关系、不并存，缓冲不会被算两遍。
 
 ### 占用时刻表 ≠ 真实占用（第五轮修正）
 
@@ -184,6 +188,7 @@ mvn -B test
 | `BookingFlowIT` | 16 条：HELD→CONFIRMED→IN_USE→CHECKED_OUT 全流转且退房释放占用；非法跃迁被拒并提示可达状态；改期改写占用、撞车时**旧占用回滚**、改回原时段不被自己挡住；加时延长占用块 / 撞车被拒 / 不推出可售窗口；售卖方式显式声明（钟点不许跨天、全日房区间必须等于模板）；预占过期回收只动 HELD；**确认与超时回收并发 15 轮，状态与占用行始终一致**；空闲区间含缓冲相减；可售房间随取消而回归 |
 | `CalendarIT` | 6 条：窗口按切割点旋转而不是自然日；凌晨 2 点的单归前一个营业日且不重复出现在次日；跨零点全日房在同一窗口里是完整一块；退房与取消后块消失；只返回该店房间且维修/下架房也出现（前端灰显而不是消失）；块上带客人姓名与订单状态 |
 | `OccupancyTruthIT` | 7 条：超时未退房时后续时段必须被挡；退房后恢复可售；提前入住把入住前的空档也占住；可售查询算上新单自己的入住前缓冲（与内核同口径）；加时必须真的变长（这条检查曾在重写时被删掉）；全日房可以加时/延迟退房；同一 `requestId` 带不同内容明确拒绝 |
+| `OperationLogIT` | 4 条，走 MockMvc + 真实 session：一次完整流转留下开单/入住/退房三条且都带操作人；前后值确实是两份快照（记同一个引用会让审计白记）；房间上下架留痕；取消留痕。**必须走 HTTP 层** —— `username` 来自登录拦截器写的 `AuthContext`，直接调 service 会一路是 null 而没人发现 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
@@ -197,7 +202,8 @@ mvn -B test
 | 电话预订 / 现场开房 / 平台订单 | **共用一个登记入口**，不按来源拆流程。本项目不做渠道同步，所以平台订单一律"由前台人工录入" —— 范围要在论文里写清楚 |
 | 提前入住 | 允许，由前台自行判断；但**实际入住时刻要进系统**并扩展占用区间（见上节），否则会把已住人的房再卖一次 |
 | 延迟退房 | 不做审批流。日历标红 + tooltip 提示超时时长，由人去沟通；要正式延长就走加时接口 |
-| 退房后谁确认可出售 | 保洁。目前实现是退房即释放（含缓冲一并清掉），**这是已知的信任缺口**：系统显示可售、实际还没打扫。闭环方案就是加分项 4 —— 退房落 `CLEANING` 行、保洁点"清扫完成"才释放。不必加通知器或物联网设备，前台/保洁点一下就够 |
+| 退房后谁确认可出售 | 保洁。**已实现**：退房落 `CLEANING` 占用行，前台/保洁点"清扫完成"才释放（`POST /api/rooms/{id}/cleaning-done`）。日历上待清扫的块画成中性斜纹，点它即可释放。不加通知器或物联网设备，点一下就够 |
+| 谁改了什么 | `operation_log` 记下开单/确认/入住/退房/加时/改期/取消/清扫/房间状态变更，含操作人与前后值 JSON，界面在「操作日志」页 |
 
 ## 已知约束
 
