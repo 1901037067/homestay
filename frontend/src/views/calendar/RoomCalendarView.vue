@@ -69,7 +69,7 @@
               v-for="h in 24"
               :key="h"
               class="track__cell"
-              :class="{ 'is-blocked': cellBlocked(room, h - 1) }"
+              :class="{ 'is-blocked': !cellSellable(room, h - 1) }"
               @click="onCellClick(room, h - 1)"
             />
             <div
@@ -213,7 +213,9 @@ const bookDlg = ref(false)
 const detailDlg = ref(false)
 const detail = ref(null)
 const formError = ref('')
-const form = reactive({ room: null, mode: 'hourly', start: '14:00', hours: 3, guest: '', phone: '' })
+const form = reactive({
+  room: null, mode: 'hourly', start: '14:00', hours: 3, guest: '', phone: '', requestId: ''
+})
 
 const pad = (n) => String(n).padStart(2, '0')
 // 切割点小时直接从 windowStart 取，别去 parse(dayCutTime) —— 那是 "06:00:00"，
@@ -231,12 +233,27 @@ function cellHour(offset) {
   return pad((dayCutHour.value + offset) % 24) + ':00'
 }
 
-/** 第 offset 个小时格（0~23）是否被任何一块挡住 */
-function cellBlocked(room, offset) {
-  const ws = parse(cal.value.windowStart)
-  const from = addMinutes(ws, offset * 60)
-  const to = addMinutes(from, 60)
-  return room.blocks.some((b) => parse(b.blockStart) < to && parse(b.blockEnd) > from)
+function cellStart(offset) {
+  return addMinutes(parse(cal.value.windowStart), offset * 60)
+}
+
+/**
+ * 该格能不能开出一张**最小合法单**。
+ *
+ * <p>和后端 SellPolicy 同口径：入住时刻落在可售窗口内，且按该房型的起步时长 +
+ * 自己的入住前/退房后缓冲试算一遍不与别人重叠。
+ * 少了这一步就会出现"格子看着能点、点了被拒"—— 审阅第 4 条举的例子是
+ * 已有块到 12:45、新单 13:00 入住、入住前缓冲 30 分钟 → 新 block 从 12:30 起，实际冲突。
+ */
+function cellSellable(room, offset) {
+  if (room.status !== 'ON_SALE') return false
+  const from = cellStart(offset)
+  const t = `${pad(from.getHours())}:${pad(from.getMinutes())}`
+  if (t < cal.value.openTime.slice(0, 5) || t > cal.value.closeTime.slice(0, 5)) return false
+
+  const effStart = addMinutes(from, -(room.cleanBeforeMinutes || 0))
+  const effEnd = addMinutes(from, (room.minHours || 1) * 60 + (room.cleanAfterMinutes || 0))
+  return !room.blocks.some((b) => parse(b.blockStart) < effEnd && parse(b.blockEnd) > effStart)
 }
 
 function blkClass(b) {
@@ -310,14 +327,15 @@ function onCellClick(room, offset) {
     ElMessage.warning('维修中或已下架的房间不可开单，请先改状态')
     return
   }
-  if (cellBlocked(room, offset)) return
+  if (!cellSellable(room, offset)) return
   Object.assign(form, {
     room,
     mode: 'hourly',
     start: cellHour(offset),
     hours: 3,
     guest: '',
-    phone: ''
+    phone: '',
+    requestId: (crypto.randomUUID ? crypto.randomUUID() : `REQ-${Date.now()}-${Math.random()}`)
   })
   formError.value = ''
   bookDlg.value = true
@@ -341,7 +359,12 @@ async function submit() {
       guestName: form.guest.trim(),
       guestPhone: form.phone.trim() || null,
       startTime: fmt(previewEnd.value.start),
-      endTime: fmt(previewEnd.value.end)
+      endTime: fmt(previewEnd.value.end),
+      // 售卖方式必须显式声明。原先后端按"是否跨天"猜，22:00→次日00:30 这种
+      // 2.5 小时的单子就能绕过起步时长校验。
+      saleType: form.mode === 'fullday' ? 'FULL_DAY' : 'HOURLY',
+      // 幂等键：双击或超时重试带同一个值，服务端返回原单而不是再造一单
+      requestId: form.requestId
     })
     ElMessage.success(`已开单：${form.room.roomNo} ${previewText.value}`)
     bookDlg.value = false

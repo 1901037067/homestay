@@ -62,6 +62,12 @@ class CalendarIT extends AbstractMysqlIT {
                 start, end, Booking.CONFIRMED, null));
     }
 
+    /** 跨天的整日占用必须显式声明 FULL_DAY —— 钟点跨天会被可售规则拒掉。 */
+    private void bookFullDay(Long roomId, LocalDateTime start, LocalDateTime end) {
+        bookingService.create(new CreateBookingReq(roomId, "客人" + System.nanoTime(), null,
+                start, end, Booking.CONFIRMED, null, "FULL_DAY", null));
+    }
+
     private CalendarRoomVO row(CalendarVO vo, Long roomId) {
         return vo.rooms().stream().filter(r -> r.roomId().equals(roomId)).findFirst().orElseThrow();
     }
@@ -98,7 +104,7 @@ class CalendarIT extends AbstractMysqlIT {
     void crossMidnightStaysOneBlock() {
         PropertyVO p = property(LocalTime.of(6, 0));
         Room r = room(p.id(), 60);
-        book(r.getId(), DAY.atTime(14, 0), DAY.plusDays(1).atTime(12, 0));
+        bookFullDay(r.getId(), DAY.atTime(14, 0), DAY.plusDays(1).atTime(12, 0));
 
         List<CalendarBlock> blocks = row(calendarService.calendar(p.id(), DAY), r.getId()).blocks();
         assertThat(blocks).hasSize(1);

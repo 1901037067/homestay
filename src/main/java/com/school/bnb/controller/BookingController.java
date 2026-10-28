@@ -2,6 +2,7 @@ package com.school.bnb.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.school.bnb.common.R;
+import com.school.bnb.booking.SaleType;
 import com.school.bnb.dto.ChangeTimesReq;
 import com.school.bnb.dto.CreateBookingReq;
 import com.school.bnb.dto.ExtendReq;
@@ -96,14 +97,15 @@ public class BookingController {
         return R.ok(service.extend(id, req));
     }
 
-    @Operation(summary = "可售房间列表")
+    @Operation(summary = "可售房间列表", description = "与下单走同一套 SellPolicy，不会出现查询说可售、下单被拒")
     @GetMapping("/rooms/availability")
     public R<List<RoomVO>> availableRooms(
             @RequestParam(required = false) Long propertyId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime start,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime end,
-            @RequestParam(required = false) Integer minHours) {
-        return R.ok(service.availableRooms(propertyId, start, end, minHours));
+            @RequestParam(required = false) Integer minHours,
+            @RequestParam(required = false, defaultValue = "HOURLY") SaleType saleType) {
+        return R.ok(service.availableRooms(propertyId, start, end, minHours, saleType));
     }
 
     @Operation(summary = "某房的空闲区间列表")

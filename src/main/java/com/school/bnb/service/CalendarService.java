@@ -74,6 +74,9 @@ public class CalendarService {
                             t == null ? null : t.getName(), r.getStatus(),
                             t == null ? null : t.getFullDayStart(),
                             t == null ? null : t.getFullDayEnd(),
+                            t == null ? null : t.getMinHours(),
+                            t == null ? null : t.getCleanBeforeMinutes(),
+                            t == null ? null : t.getCleanAfterMinutes(),
                             byRoom.getOrDefault(r.getId(), List.of()));
                 })
                 .toList();

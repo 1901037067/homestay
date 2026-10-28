@@ -17,5 +17,8 @@ public record CalendarRoomVO(
         String status,
         LocalTime fullDayStart,
         LocalTime fullDayEnd,
+        Integer minHours,
+        Integer cleanBeforeMinutes,
+        Integer cleanAfterMinutes,
         List<CalendarBlock> blocks) {
 }

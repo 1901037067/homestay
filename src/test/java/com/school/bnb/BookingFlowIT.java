@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.school.bnb.booking.BookingKernel;
+import com.school.bnb.booking.SaleType;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.ChangeTimesReq;
@@ -214,8 +215,8 @@ class BookingFlowIT extends AbstractMysqlIT {
     // ------------------------------------------------------------ 业务校验
 
     @Test
-    @DisplayName("同一天内要满足起步时长；跨天的全日房模板不受 min_hours 约束")
-    void minHoursOnlyConstrainsSameDay() {
+    @DisplayName("起步时长按显式 saleType 判定：钟点受约束，全日房模板不受；钟点不许跨天")
+    void minHoursFollowsDeclaredSaleType() {
         Room room = fixture(LocalTime.of(8, 0), LocalTime.of(22, 0), 3, 0, 0);
 
         assertThatThrownBy(() -> bookingService.create(req(room.getId(),
@@ -224,9 +225,29 @@ class BookingFlowIT extends AbstractMysqlIT {
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
 
-        BookingVO fullDay = bookingService.create(req(room.getId(),
-                DAY.withHour(14), DAY.plusDays(1).withHour(12)));
+        // 审阅抓出来的洞：22:00 → 次日 00:30 只有 2.5 小时，靠"跨天"就能绕过起步时长。
+        // 现在它按钟点会被直接拒（跨天），要买跨天必须显式声明全日房。
+        assertThatThrownBy(() -> bookingService.create(req(room.getId(),
+                DAY.withHour(21), DAY.plusDays(1).withMinute(30))))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
+
+        BookingVO fullDay = bookingService.create(new CreateBookingReq(room.getId(), "全日客", null,
+                DAY.withHour(14), DAY.plusDays(1).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
         assertThat(fullDay.endTime()).isEqualTo(DAY.plusDays(1).withHour(12));
+    }
+
+    @Test
+    @DisplayName("声明成全日房但区间不等于房型模板，照样拒")
+    void fullDayMustMatchTemplate() {
+        Room room = fixture(LocalTime.of(8, 0), LocalTime.of(22, 0), 3, 0, 0);
+
+        assertThatThrownBy(() -> bookingService.create(new CreateBookingReq(room.getId(), "假全日", null,
+                DAY.withHour(10), DAY.plusDays(1).withHour(2), Booking.CONFIRMED, null, "FULL_DAY", null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
     }
 
     @Test
@@ -246,8 +267,9 @@ class BookingFlowIT extends AbstractMysqlIT {
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
 
-        assertThat(bookingService.create(req(room.getId(),
-                DAY.withHour(14), DAY.plusDays(1).withHour(12)))).isNotNull();
+        assertThat(bookingService.create(new CreateBookingReq(room.getId(), "全日客", null,
+                DAY.withHour(14), DAY.plusDays(1).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null)))
+                .isNotNull();
     }
 
     @Test
@@ -324,15 +346,62 @@ class BookingFlowIT extends AbstractMysqlIT {
         Room a = plainRoom();
         Room b = plainRoom();
 
-        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null))
+        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null, SaleType.HOURLY))
                 .extracting("id").contains(a.getId(), b.getId());
 
         BookingVO taken = bookingService.create(req(a.getId(), DAY.withHour(14), DAY.withHour(18)));
-        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null))
+        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null, SaleType.HOURLY))
                 .extracting("id").doesNotContain(a.getId());
 
         bookingService.cancel(taken.id());
-        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null))
+        assertThat(bookingService.availableRooms(null, DAY.withHour(14), DAY.withHour(18), null, SaleType.HOURLY))
                 .extracting("id").contains(a.getId());
+    }
+
+    /**
+     * 审阅第 2 条的直接回归：确认与超时回收同时发生时，
+     * 绝不允许出现"状态是 CONFIRMED 但占用行已被删"的订单 —— 那等于房间被白占了。
+     *
+     * <p>修法是把状态判定交给带原状态的条件更新：回收只认 HELD，确认只认 HELD，
+     * 两者抢同一行，必然只有一个成功。
+     */
+    @Test
+    @DisplayName("确认与超时回收并发：状态与占用行必须始终一致")
+    void confirmRacesHoldRelease() throws Exception {
+        for (int i = 0; i < 15; i++) {
+            Room room = plainRoom();
+            BookingVO held = bookingService.create(new CreateBookingReq(room.getId(), "抢确认", null,
+                    DAY.withHour(14), DAY.withHour(18), Booking.HELD, 1, null, null));
+
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            var gate = new java.util.concurrent.CountDownLatch(1);
+            Runnable confirm = () -> {
+                try {
+                    gate.await();
+                    bookingService.confirm(held.id());
+                } catch (Exception ignored) {
+                    // 被回收抢先就是预期结果之一
+                }
+            };
+            Runnable release = () -> {
+                try {
+                    gate.await();
+                    kernel.releaseExpiredHolds(java.time.LocalDateTime.now().plusMinutes(30));
+                } catch (Exception ignored) {
+                }
+            };
+            var f1 = pool.submit(confirm);
+            var f2 = pool.submit(release);
+            gate.countDown();
+            f1.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            f2.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            pool.shutdownNow();
+
+            String status = kernel.require(held.id()).getStatus();
+            int rows = occupancyCount(room.getId());
+            assertThat(rows)
+                    .as("第 %d 轮 status=%s：CONFIRMED 必须有占用行，RELEASED 必须没有", i, status)
+                    .isEqualTo(Booking.CONFIRMED.equals(status) ? 1 : 0);
+        }
     }
 }

@@ -54,6 +54,16 @@ public class RoomTypeService {
     @Transactional
     public RoomType save(RoomTypeReq req) {
         propertyService.require(req.propertyId());
+        RoomType existing = req.id() == null ? null : require(req.id());
+        if (existing != null && !existing.getPropertyId().equals(req.propertyId())) {
+            // 改挂到别的民宿会留下"房间属于 A 店、房型属于 B 店"的错配。
+            // 按这个体量，直接禁止跨店迁移就够，不值得做级联搬家。
+            long rooms = countRooms(existing.getId());
+            if (rooms > 0) {
+                throw new BizException(ErrorCode.HAS_CHILDREN,
+                        "该房型下仍有 " + rooms + " 间房，不能改挂到其它民宿");
+            }
+        }
         RoomType t = new RoomType();
         t.setId(req.id());
         t.setPropertyId(req.propertyId());

@@ -2,7 +2,9 @@ package com.school.bnb.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.school.bnb.entity.Occupancy;
+import com.school.bnb.vo.CalendarBlock;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -10,13 +12,28 @@ import org.apache.ibatis.annotations.Select;
 public interface OccupancyMapper extends BaseMapper<Occupancy> {
 
     /**
-     * 半开区间重叠判定：新单 [start, end) 与既有占用冲突的条数。
+     * 半开区间重叠判定 —— <b>必须是当前读，不能是普通 SELECT</b>。
      *
-     * <p>按总纲 A「有行即占位」，这里<b>不需要任何状态过滤条件</b> —— 已取消/已退房的单子
-     * 它的行早就被删掉了，留下的行全都是真占位。这是本设计最省事也最不容易漏的地方。
+     * <p>房间行锁只解决"同一房间的写入互斥"，不解决<b>可见性</b>。RR 下一致性读视图在事务内
+     * 第一条普通 SELECT 时就建立了；真实入口 {@code BookingService.create} 在进内核之前
+     * 还要先查房间/房型/民宿，所以快照建立点早于拿锁 —— 拿锁后那条普通 SELECT
+     * 看不到别人刚提交的占用，直接超卖（OversellAuditIT 实测 12/12 轮超卖）。
      *
-     * <p>边界相接（block_end == start）不算冲突，会被清扫缓冲自然挡住。
+     * <p>{@code FOR UPDATE} 是当前读，永远读最新已提交版本，与快照和隔离级别无关。
+     * 返回 id 而不是 count，是因为 MySQL 不允许聚合查询带 FOR UPDATE。
      */
+    @Select("""
+            select id from occupancy
+            where room_id = #{roomId}
+              and block_start < #{endTime}
+              and block_end > #{startTime}
+            for update
+            """)
+    List<Long> lockOverlapping(@Param("roomId") Long roomId,
+                               @Param("startTime") LocalDateTime startTime,
+                               @Param("endTime") LocalDateTime endTime);
+
+    /** 只读版，给报表与调试用 —— 不要拿它做冲突判定。 */
     @Select("""
             select count(1) from occupancy
             where room_id = #{roomId}
@@ -43,7 +60,7 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
               and block_end > #{startTime}
             order by block_start
             """)
-    java.util.List<Occupancy> findBlocksIn(@Param("roomId") Long roomId,
+    List<Occupancy> findBlocksIn(@Param("roomId") Long roomId,
                                            @Param("startTime") LocalDateTime startTime,
                                            @Param("endTime") LocalDateTime endTime);
 
@@ -67,7 +84,7 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
             order by o.block_start
             </script>
             """)
-    java.util.List<com.school.bnb.vo.CalendarBlock> findCalendarBlocks(
+    List<CalendarBlock> findCalendarBlocks(
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,
             @Param("propertyId") Long propertyId);

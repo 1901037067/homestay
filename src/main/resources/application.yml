@@ -16,6 +16,13 @@ spring:
       maximum-pool-size: ${HIKARI_MAX_POOL:50}
       minimum-idle: 5
       connection-timeout: 30000
+      # 显式选 READ COMMITTED 而不是默认的 REPEATABLE READ：
+      # RR 下一致性读视图在事务内第一条普通 SELECT 时建立，而下单入口在拿房间锁之前
+      # 要先查房间/房型/民宿，锁后的普通查询会看不到别人刚提交的占用。
+      # 内核已经把冲突检测改成当前读（FOR UPDATE）来根治这一点，这里再显式选 RC 作为
+      # 第二道防线：每条语句各自取快照，行为更好推理，也是 ROW binlog 下的主流选择。
+      # RR 与 RC 的对比数据留给 W8 压测（实施计划 3.3）。
+      transaction-isolation: TRANSACTION_READ_COMMITTED
 
   flyway:
     enabled: true

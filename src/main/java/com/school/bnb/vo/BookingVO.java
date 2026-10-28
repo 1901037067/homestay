@@ -7,6 +7,8 @@ import java.time.LocalDateTime;
 public record BookingVO(
         Long id,
         String bookingNo,
+        String requestId,
+        String saleType,
         Long roomId,
         String roomNo,
         Long propertyId,
@@ -24,7 +26,8 @@ public record BookingVO(
         LocalDateTime createdAt) {
 
     public static BookingVO of(Booking b, String roomNo, Long propertyId, String propertyName, String roomTypeName) {
-        return new BookingVO(b.getId(), b.getBookingNo(), b.getRoomId(), roomNo, propertyId, propertyName,
+        return new BookingVO(b.getId(), b.getBookingNo(), b.getRequestId(), b.getSaleType(),
+                b.getRoomId(), roomNo, propertyId, propertyName,
                 roomTypeName, b.getGuestName(), b.getGuestPhone(), b.getStartTime(), b.getEndTime(),
                 b.getStatus(), b.getHoldExpireAt(), b.getActualCheckIn(), b.getActualCheckOut(),
                 b.getAmount(), b.getCreatedAt());

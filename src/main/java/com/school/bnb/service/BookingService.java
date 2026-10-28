@@ -3,6 +3,8 @@ package com.school.bnb.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.school.bnb.booking.BookingKernel;
+import com.school.bnb.booking.SaleType;
+import com.school.bnb.booking.SellPolicy;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.ChangeTimesReq;
@@ -14,17 +16,16 @@ import com.school.bnb.entity.Occupancy;
 import com.school.bnb.entity.Property;
 import com.school.bnb.entity.Room;
 import com.school.bnb.entity.RoomType;
+import com.school.bnb.mapper.BookingMapper;
 import com.school.bnb.mapper.OccupancyMapper;
 import com.school.bnb.mapper.PropertyMapper;
 import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.mapper.RoomTypeMapper;
-import com.school.bnb.mapper.BookingMapper;
 import com.school.bnb.vo.BookingVO;
 import com.school.bnb.vo.FreeSlotVO;
 import com.school.bnb.vo.RoomVO;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,13 +35,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 预订域的对外服务：把"房源上下文"翻译成内核需要的区间与缓冲，再做业务校验。
+ * 预订域对外服务：把房源上下文翻译成内核需要的区间与缓冲，可售性判断交给 {@link SellPolicy}。
  *
- * <p>分工要说清楚：内核只认区间 + 缓冲分钟数（为了能用纯单测覆盖 5.1 的边界），
- * 而<b>清扫缓冲必须由服务端从房型解析</b> —— 让前端传缓冲，等于允许它绕过缓冲下单。
- *
- * <p>校验分两层：业务规则（房间是否在售、起步时长、可售窗口）可以在进锁之前先拒，
- * 便宜且失败得快；<b>冲突检测必须在锁内</b>，一步都不能提前。
+ * <p>分工：策略判断（能不能卖）在进锁之前先拒，便宜且失败得快；
+ * 冲突判断（有没有被别人占了）留在内核、锁后当前读。<b>两件事不能互换位置</b> ——
+ * 策略放锁内会拉长临界区，冲突放锁外就是超卖。
  */
 @Service
 public class BookingService {
@@ -71,11 +70,12 @@ public class BookingService {
     @Transactional
     public BookingVO create(CreateBookingReq req) {
         Ctx ctx = ctx(req.roomId());
+        SaleType type = parseSaleType(req.saleType());
         String status = req.status() == null || req.status().isBlank() ? Booking.CONFIRMED : req.status();
         if (!CREATABLE.contains(status)) {
             throw new BizException(ErrorCode.BAD_REQUEST, "下单状态只能是 HELD 或 CONFIRMED，收到 " + status);
         }
-        assertSellable(ctx, req.startTime(), req.endTime());
+        assertSellable(ctx, req.startTime(), req.endTime(), type);
 
         LocalDateTime holdExpire = Booking.HELD.equals(status)
                 ? LocalDateTime.now().plusMinutes(req.holdMinutes() == null ? DEFAULT_HOLD_MINUTES : req.holdMinutes())
@@ -85,7 +85,7 @@ public class BookingService {
                 ctx.room().getId(), req.guestName().trim(), req.guestPhone(),
                 req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes(),
-                status, holdExpire));
+                status, holdExpire, req.requestId(), type.name()));
         return toVO(b, ctx);
     }
 
@@ -93,7 +93,8 @@ public class BookingService {
     public BookingVO changeTimes(Long bookingId, ChangeTimesReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        assertSellable(ctx, req.startTime(), req.endTime());
+        // 沿用订单原本的售卖方式，不接受请求里带类型
+        assertSellable(ctx, req.startTime(), req.endTime(), parseSaleType(b.getSaleType()));
         return toVO(kernel.changeTimes(bookingId, req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes()), ctx);
     }
@@ -102,13 +103,7 @@ public class BookingService {
     public BookingVO extend(Long bookingId, ExtendReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        // 加时不能把结束时刻推出可售窗口（同一天内的延长时间才算钟点加时）
-        boolean sameDay = b.getStartTime().toLocalDate().equals(req.newEndTime().toLocalDate());
-        if (sameDay && req.newEndTime().toLocalTime().isAfter(ctx.property().getCloseTime())) {
-            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
-                    "加时后的结束时间 " + req.newEndTime().toLocalTime() + " 超出可售窗口 "
-                            + ctx.property().getCloseTime());
-        }
+        assertSellable(ctx, b.getStartTime(), req.newEndTime(), parseSaleType(b.getSaleType()));
         return toVO(kernel.extend(bookingId, req.newEndTime(), ctx.type().getCleanAfterMinutes()), ctx);
     }
 
@@ -161,11 +156,11 @@ public class BookingService {
     }
 
     /**
-     * 某房在 [start, end) 内的空闲区间 = 窗口减去所有占用块（缓冲已经含在 block 里，不再重复扣）。
+     * 某房在 [start, end) 内的空闲区间 = 窗口减去所有占用块（缓冲已含在 block 里，不重复扣）。
      *
-     * <p>这里<b>只做几何相减，不套可售窗口</b>：可售性是"这一段能不能卖"的业务判断，
-     * 由 create 在锁外先拒、内核在锁内兜住；房态日历要画的是"这段时间是不是空的"，
-     * 两者混在一个接口里会让日历出现说不清楚的洞。
+     * <p><b>只做几何相减，不套可售策略。</b>可售性是"这段能不能卖"，由 {@link SellPolicy} 在
+     * create 与 availableRooms 里判；日历要画的是"这段时间是不是空的"。
+     * 把两者混进一个接口，日历会出现"没人住却画成不可点"的说不清的洞。
      */
     public List<FreeSlotVO> freeSlots(Long roomId, LocalDateTime start, LocalDateTime end, Integer minHours) {
         if (start == null || end == null || !end.isAfter(start)) {
@@ -180,7 +175,6 @@ public class BookingService {
         LocalDateTime cursor = start;
         for (Occupancy o : blocks) {
             if (!o.getBlockStart().isAfter(cursor)) {
-                // 与当前游标不相干（已被覆盖或在游标之前），只把游标往后推
                 if (o.getBlockEnd().isAfter(cursor)) {
                     cursor = o.getBlockEnd();
                 }
@@ -197,82 +191,66 @@ public class BookingService {
         return free.stream().filter(s -> s.minutes() >= minMinutes).toList();
     }
 
-    public List<RoomVO> availableRooms(Long propertyId, LocalDateTime start, LocalDateTime end, Integer minHours) {
+    /** 可售房间查询 —— 和 create 走同一个 {@link SellPolicy}，不会再出现"查询说能卖、下单被拒"。 */
+    public List<RoomVO> availableRooms(Long propertyId, LocalDateTime start, LocalDateTime end,
+                                       Integer minHours, SaleType saleType) {
         if (start == null || end == null || !end.isAfter(start)) {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE, "end 必须晚于 start");
         }
+        SaleType type = saleType == null ? SaleType.HOURLY : saleType;
         List<Room> rooms = roomMapper.findAvailable(propertyId, start, end);
         if (rooms.isEmpty()) {
             return List.of();
         }
         Map<Long, RoomType> types = roomTypeMapper.selectList(null).stream()
                 .collect(Collectors.toMap(RoomType::getId, t -> t));
-        Map<Long, String> propNames = propertyMapper.selectList(null).stream()
-                .collect(Collectors.toMap(Property::getId, Property::getName));
-        long minMinutes = minHours == null ? 0 : Math.max(minHours, 0) * 60L;
-        boolean sameDay = start.toLocalDate().equals(end.toLocalDate());
-        long requested = Duration.between(start, end).toMinutes();
+        Map<Long, Property> properties = propertyMapper.selectList(null).stream()
+                .collect(Collectors.toMap(Property::getId, p -> p));
 
         List<RoomVO> out = new ArrayList<>();
         for (Room r : rooms) {
             RoomType t = types.get(r.getRoomTypeId());
-            if (t == null) {
+            Property p = properties.get(r.getPropertyId());
+            if (t == null || p == null) {
                 continue;
             }
-            // 起步时长只约束同一天内的请求；全日房必然跨天，自动豁免（见 assertSellable 的注释）
-            if (sameDay && requested < Math.max(minMinutes, t.getMinHours() * 60L)) {
+            if (!SellPolicy.isSellable(rule(r, t, p), start, end, type)) {
                 continue;
             }
-            out.add(RoomVO.of(r, propNames.get(r.getPropertyId()), t.getName()));
+            // minHours 参数只在钟点语义下有意义，且不能比房型的起步时长更宽松
+            if (type == SaleType.HOURLY && minHours != null
+                    && Duration.between(start, end).toMinutes() < Math.max(minHours, t.getMinHours()) * 60L) {
+                continue;
+            }
+            out.add(RoomVO.of(r, p.getName(), t.getName()));
         }
         return out;
     }
 
-    // ------------------------------------------------------------ 规则
+    // ------------------------------------------------------------ 规则与装配
 
-    /**
-     * 可售窗口与起步时长的落地规则（实施计划 2.5）：
-     *
-     * <ul>
-     *   <li><b>入住时刻必须落在 [open_time, close_time]</b> —— 全日房模板 14:00 入住，
-     *       天然满足，所以不需要给它写一条"豁免"分支；</li>
-     *   <li><b>起步时长只约束"同一天内结束"的请求</b> —— 全日房必然跨天，因此自动不受
-     *       {@code min_hours} 限制。</li>
-     * </ul>
-     * 这两条比"按房型是不是全日房"来判断更稳：房型表里全日房和钟点房共用同一套时段字段。
-     */
-    private void assertSellable(Ctx ctx, LocalDateTime start, LocalDateTime end) {
-        if (!end.isAfter(start)) {
-            throw new BizException(ErrorCode.INVALID_TIME_RANGE, "结束时间必须晚于开始时间");
-        }
-        if (!Room.ON_SALE.equals(ctx.room().getStatus())) {
-            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
-                    "房间 " + ctx.room().getRoomNo() + " 当前状态 " + ctx.room().getStatus() + "，不可售");
-        }
-        RoomType type = ctx.type();
-        Property property = ctx.property();
-        LocalTime open = property.getOpenTime();
-        LocalTime close = property.getCloseTime();
+    private static SellPolicy.Rule rule(Room room, RoomType type, Property property) {
+        return new SellPolicy.Rule(room.getStatus(), room.getRoomNo(), property.getOpenTime(),
+                property.getCloseTime(), type.getMinHours(), type.getFullDayStart(), type.getFullDayEnd());
+    }
 
-        if (start.toLocalTime().isBefore(open) || start.toLocalTime().isAfter(close)) {
-            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
-                    "入住时刻 " + start.toLocalTime() + " 不在可售窗口 " + open + "–" + close + " 内");
-        }
-        boolean sameDay = start.toLocalDate().equals(end.toLocalDate());
-        if (sameDay) {
-            if (end.toLocalTime().isAfter(close)) {
-                throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
-                        "钟点房结束时刻 " + end.toLocalTime() + " 超出可售窗口 " + close);
-            }
-            long minutes = Duration.between(start, end).toMinutes();
-            if (minutes < type.getMinHours() * 60L) {
-                throw new BizException(ErrorCode.INVALID_TIME_RANGE,
-                        "该房型起步 " + type.getMinHours() + " 小时，当前只订了 " + minutes + " 分钟");
-            }
+    private void assertSellable(Ctx ctx, LocalDateTime start, LocalDateTime end, SaleType type) {
+        SellPolicy.Verdict v = SellPolicy.check(rule(ctx.room(), ctx.type(), ctx.property()), start, end, type);
+        if (!v.sellable()) {
+            throw new BizException(v.code(), v.reason());
         }
     }
 
-    // ------------------------------------------------------------ 上下文与装配
+    private static SaleType parseSaleType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return SaleType.HOURLY;
+        }
+        try {
+            return SaleType.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "saleType 只能是 HOURLY 或 FULL_DAY，收到 " + raw);
+        }
+    }
 
     private record Ctx(Room room, RoomType type, Property property) {
     }

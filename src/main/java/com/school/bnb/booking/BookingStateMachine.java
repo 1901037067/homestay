@@ -31,11 +31,17 @@ public final class BookingStateMachine {
     public static void assertCan(String from, String to) {
         Set<String> allowed = LEGAL.get(from);
         if (allowed == null || !allowed.contains(to)) {
-            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE,
-                    String.format("不允许 %s → %s%s", from, to,
-                            allowed == null || allowed.isEmpty() ? "（已是终态）"
-                                    : "，可前往：" + String.join("/", allowed)));
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE, describe(from, to));
         }
+    }
+
+    /** 给内核的条件更新失败时用。可达状态排序输出，免得同一条错误两次跑出来字面不同。 */
+    public static String describe(String from, String to) {
+        Set<String> allowed = LEGAL.get(from);
+        String suffix = allowed == null || allowed.isEmpty()
+                ? "（已是终态）"
+                : "，可前往：" + String.join("/", allowed.stream().sorted().toList());
+        return String.format("不允许 %s → %s%s", from, to, suffix);
     }
 
     public static boolean can(String from, String to) {

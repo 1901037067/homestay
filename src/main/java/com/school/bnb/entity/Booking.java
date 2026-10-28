@@ -22,8 +22,14 @@ public class Booking {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 幂等键：双击下单靠它兜住。 */
+    /** 幂等键：防重复开单。系统内部生成的单号，不参与幂等判定。 */
     private String bookingNo;
+
+    /** 客户端生成的请求标识。同一请求重复提交时返回原单，见 uk_request_id。 */
+    private String requestId;
+
+    /** HOURLY / FULL_DAY。售卖方式由下单时声明，改期与加时沿用，不允许中途改。 */
+    private String saleType;
     private Long roomId;
     private String guestName;
     private String guestPhone;
