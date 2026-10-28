@@ -46,4 +46,29 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
     java.util.List<Occupancy> findBlocksIn(@Param("roomId") Long roomId,
                                            @Param("startTime") LocalDateTime startTime,
                                            @Param("endTime") LocalDateTime endTime);
+
+    /**
+     * 房态日历用：一次取出营业日窗口内所有占用块（含客人信息），避免按房间逐个查。
+     *
+     * <p>判定用 block 而不是业务时间 —— 日历要画的就是"这段时间被挡住了"，
+     * 缓冲期虽然没人住，但确实不可售，不画出来前台就会在缓冲时段上重复开单。
+     */
+    @Select("""
+            <script>
+            select o.room_id, o.booking_id, b.booking_no, b.guest_name, b.status as booking_status,
+                   o.start_time, o.end_time, o.block_start, o.block_end, o.kind
+            from occupancy o
+            join booking b on b.id = o.booking_id
+            where o.block_start &lt; #{to}
+              and o.block_end &gt; #{from}
+            <if test="propertyId != null">
+              and o.room_id in (select id from room where property_id = #{propertyId})
+            </if>
+            order by o.block_start
+            </script>
+            """)
+    java.util.List<com.school.bnb.vo.CalendarBlock> findCalendarBlocks(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("propertyId") Long propertyId);
 }

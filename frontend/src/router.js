@@ -6,6 +6,7 @@ const DashboardView = () => import('./views/DashboardView.vue')
 const RoomListView = () => import('./views/room/RoomListView.vue')
 const RoomTypeListView = () => import('./views/room/RoomTypeListView.vue')
 const PropertyListView = () => import('./views/room/PropertyListView.vue')
+const RoomCalendarView = () => import('./views/calendar/RoomCalendarView.vue')
 
 // hash 模式：将来前端是静态资源托管，不需要服务端 rewrite
 const router = createRouter({
@@ -17,6 +18,7 @@ const router = createRouter({
       component: AppShell,
       children: [
         { path: '', component: DashboardView },
+        { path: 'calendar', component: RoomCalendarView },
         { path: 'rooms', component: RoomListView },
         { path: 'room-types', component: RoomTypeListView },
         { path: 'properties', component: PropertyListView }

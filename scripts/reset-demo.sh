@@ -27,7 +27,11 @@ echo "==> 3/4 校验迁移版本"
 sh "$MVN" -B -q flyway:info
 
 echo "==> 4/4 灌演示流水（不进 Flyway，所以可以反复重灌）"
-docker compose exec -T mysql mysql -uroot -p"$MYSQL_PWD" bnb < db/demo/seed_demo.sql
+# 必须显式指定 --default-character-set：mysql 客户端默认按 latin1 读文件，
+# 而 seed_demo.sql 是 UTF-8 —— 不指定就会把每个中文字节再编码一次，
+# 存进库变成"李文博"→9 个字符，前台显示成乱码（Flyway 走 JDBC 不受影响，所以只有这里是坏的）。
+docker compose exec -T mysql mysql --default-character-set=utf8mb4 \
+  -uroot -p"$MYSQL_PWD" bnb < db/demo/seed_demo.sql
 
 echo
 echo "完成。演示账号 admin / Staff 均为 Admin@123"

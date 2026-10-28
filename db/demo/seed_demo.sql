@@ -148,4 +148,9 @@ select '历史订单残留占用行数（必须为 0）' as check_item, count(1)
 from occupancy o join booking b on b.id = o.booking_id
 where b.status in ('SETTLED', 'CHECKED_OUT', 'CANCELLED')
 union all
-select '当前占用行数', count(1) from occupancy;
+select '当前占用行数', count(1) from occupancy
+union all
+-- 编码自检用长度而不是打印中文：cp936 终端下中文本来就花，长度是终端无关的
+select '李文博字符数（必须为 3；出现 9 说明客户端按 latin1 读了 UTF-8 文件）',
+       char_length(guest_name)
+from booking where booking_no = 'D20260001';

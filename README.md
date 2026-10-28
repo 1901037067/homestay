@@ -104,7 +104,11 @@ PUT  /api/bookings/{id}/times     改期：删旧占用→重跑冲突检测→�
 POST /api/bookings/{id}/confirm | /cancel | /check-in | /check-out | /extend
 GET  /api/rooms/availability      ?propertyId&start&end&minHours  → 可售房间
 GET  /api/rooms/{id}/availability ?start&end&minHours             → 空闲区间列表
+GET  /api/calendar                ?propertyId&date                → 房态日历数据源
 ```
+
+`/api/calendar` 的 `propertyId` 是必填：前台一次只看一家店，而营业日切割点是按店配置的，
+两家店混在一张图上窗口对不齐。
 
 删除守卫（实施计划 2.6）：房间有历史订单 → `2002 ROOM_HAS_HISTORY`；民宿/房型有下级数据 →
 `2013 HAS_CHILDREN`；同民宿下房号重复 → `2012 DUPLICATE_KEY`。下架走
@@ -141,6 +145,7 @@ mvn -B test
 | `BookingKernelIT` | 并发抢同一时段恰好一单成功；边界相接不算冲突；45 分钟清扫缓冲能挡住近邻单；跨零点全日房覆盖次日上午；取消即删占用行并可再售；**反向对照：不走行锁时数据库自己不拦两个重叠区间**；非法区间被拒 |
 | `RoomCatalogIT` | 民宿→房型→房间三级增改查且列表带出上级名称；房间有历史订单禁删（含"订单已取消但仍有历史"这一例）；有下级数据禁删民宿与房型；状态筛选、房号搜索、翻页不重不漏；房型不能挂到别的民宿下 |
 | `BookingFlowIT` | 14 条：HELD→CONFIRMED→IN_USE→CHECKED_OUT 全流转且退房释放占用；非法跃迁被拒并提示可达状态；改期改写占用、撞车时**旧占用回滚**、改回原时段不被自己挡住；加时延长占用块 / 撞车被拒 / 不推出可售窗口；起步时长只约束当天、可售窗口只约束入住时刻；预占过期回收只动 HELD；空闲区间含缓冲相减；可售房间随取消而回归 |
+| `CalendarIT` | 6 条：窗口按切割点旋转而不是自然日；凌晨 2 点的单归前一个营业日且不重复出现在次日；跨零点全日房在同一窗口里是完整一块；退房与取消后块消失；只返回该店房间且维修/下架房也出现（前端灰显而不是消失）；块上带客人姓名与订单状态 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
@@ -160,6 +165,14 @@ mvn -B test
   只引 starter 会编译不过（报"找不到符号"，但符号确实在 extension 的包里）。别去翻 MP 的旧文档。
 - **`@Container` 注解的 Testcontainers 容器会按测试类停止**，多个 IT 类共享时必须用
   静态块 `start()` 的 singleton 写法，否则第二个测试类拿到已关闭的连接。
+- **`mysql < seed_demo.sql` 必须带 `--default-character-set=utf8mb4`。** 客户端默认按 latin1 读文件，
+  而 SQL 文件是 UTF-8，结果是每个中文字节被再编码一次 —— "李文博"存成 9 个字符，前台显示乱码。
+  Flyway 走 JDBC 不受影响，所以**只有演示数据是坏的、结构数据是好的**，很容易误判成前端问题。
+  `db/demo/seed_demo.sql` 末尾有一条用 `char_length` 做的自检（输出 3 才对，出现 9 就是踩了这个坑），
+  刻意不打印中文，免得在 cp936 终端里看不出差别。
+- **房态日历的横轴从营业日切割点起转**，不是 00:00 起。窗口是 `[dayCut, 次日 dayCut)`，
+  块按 `block_start/block_end`（含清扫缓冲）定位，所以一段没人住的空档也可能画着块 ——
+  那是缓冲，不是 bug。
 - Windows 控制台是 cp936，`mvn` 的中文报错会乱码；需要读结果时落到文件再用编辑器打开。
   Git Bash 里含空格的 PATH 条目（`C:\Program Files\...`）不能让 `java` 直接执行，
   但 Maven 走 `JAVA_HOME` 是好的 —— `scripts/env.sh` 已用 `cygpath` 转成 POSIX 形式。
