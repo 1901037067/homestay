@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  镜像构建时给 Maven 用的 settings。
+  只为解决一件事：从国内网络直连 Maven Central 很慢，构建会卡在下载上。
+  用阿里云镜像只替换 central，不动其它仓库 —— 与 ~/.m2/settings.xml 同一套理由：
+  mirrorOf 写 * 会把 Spring 的 milestone/snapshot 仓库一起劫持过去，那边没同步，直接 404。
+
+  在海外/校园网能直连 Central 的机器上，删掉 Dockerfile 里 COPY 这一行即可。
+-->
+<settings>
+  <mirrors>
+    <mirror>
+      <id>aliyun-central</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Maven Central</name>
+      <url>https://maven.aliyun.com/repository/central</url>
+    </mirror>
+  </mirrors>
+</settings>

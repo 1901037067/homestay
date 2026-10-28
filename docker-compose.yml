@@ -1,3 +1,9 @@
+# 开发期只要库：`docker compose up -d`
+# 整栈（库 + 后端 + 前端）：`docker compose --profile app up -d --build`
+#
+# 为什么用 profile 而不是两个 compose 文件：mysql 的配置（字符集、时区、健康检查）只该有一份，
+# 复制成两个文件，迟早一边改了另一边没改 —— 而这两项一旦不一致，会出现"中文乱码"
+# 或"凌晨的单算错天"这种极难查的问题。
 services:
   mysql:
     image: mysql:8.0
@@ -20,6 +26,45 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  backend:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bnb-backend
+    environment:
+      # 容器里连的是服务名，不是 127.0.0.1
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DB: bnb
+      MYSQL_USER: root
+      MYSQL_PASSWORD: bnb_dev_123
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # /api/ping 是免鉴权探针（应用 + Flyway + 库三件事同时成立才 200）
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:8080/api/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  frontend:
+    profiles: ["app"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bnb-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "5173:80"
 
 volumes:
   bnb-mysql-data:

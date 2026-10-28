@@ -1,0 +1,8 @@
+# 后端构建上下文只需要 pom.xml 与 src；其余（尤其 target/ 与 node_modules/）传进 Docker 会慢很多
+target/
+frontend/
+docs/
+scripts/
+.git/
+.idea/
+*.log

@@ -77,6 +77,18 @@ cd frontend && npm install && npm run dev   # 前端 5173
 
 `reset-demo.sh` 会 drop database，**跑之前先停后端**。演示中途数据点乱了可以重跑一次，30 秒复原。
 
+### 整栈部署（三服务）
+
+```bash
+docker compose --profile app up -d --build   # MySQL + 后端 + 前端（nginx 托管 dist，/api 反代）
+# 打开 http://localhost:5173
+```
+
+开发期仍只需要 `docker compose up -d`（只起库）。两者共用同一份 mysql 配置 —— 用 profile 而不是
+两个 compose 文件，是为了让字符集/时区这类"改一边忘一边就出事"的配置只有一处。
+后端镜像里放了 `docker/maven-settings.xml` 走阿里云镜像；能直连 Maven Central 的机器删掉
+Dockerfile 里那行 COPY 即可。
+
 前端不直连 8080，走 Vite dev proxy（`frontend/vite.config.js`），这样 `JSESSIONID`
 是同源 cookie，后端不必开 CORS 白名单。
 
@@ -285,6 +297,29 @@ SQL 只做范围扫描。理由和计费一样 —— 归属边界（凌晨算�
 引入 Apache POI 要背十几兆依赖，而这份数据的价值在"能贴进论文/发给店长看"，不在格式本身。
 换 xlsx 的改动被收敛在 `StatsService.toCsv` 一个方法里。
 
+## 压测与反向对照（W8）
+
+完整报告在 [docs/防超卖压测报告.md](docs/防超卖压测报告.md)，数字由压测台自动产出。三条命令：
+
+```bash
+mvn -B test -Dtest=ConcurrencyBenchIT         # 10/20/50 三档并发，各 10 轮
+mvn -B test -Dtest=ConcurrencyBenchPool50IT   # 同上但连接池 50，对照 7.4 那条坑
+mvn -B test -Dtest=OversellWithoutLockIT      # 反向对照：必须出现超卖
+```
+
+结论两句话：**正向** 每轮 10/20/50 线程抢同一间房同一时段，永远只有 1 单成功、其余全是 3003，
+零超卖零异常；**反向对照** 保留房间行锁、只把冲突检测从当前读换回普通 SELECT（并强行拉回 RR），
+10 轮 10 线程的 100 个请求**全部成功**。也就是说：互斥由行锁给，正确性由"判定要读最新已提交数据"给，
+两者缺一不可 —— 这正是论文第 4 章的主论点。
+
+压测台打的是**真实入口**而不是内核：内核里 `FOR UPDATE` 恰好是事务第一条语句，用内核压测会把
+"RR 读视图建立在拿锁之前"这个真问题盖住（W3 就是这么漏掉 12/12 超卖的）。
+
+延迟数据只报量级、不报趋势：同一档跑两次 p95 分别是 151ms 和 283ms，10 轮样本的抖动足以淹没任何曲线。
+
+RR/RC 的对比在另一处：`OversellUnderRepeatableReadIT` 把连接池隔离级别强行改回 RR 再跑真实入口并发，
+照样零超卖 —— 说明修复靠的是当前读，不是"应用恰好跑在 READ COMMITTED 上"这个配置。
+
 ## 测试
 
 ```bash
@@ -306,6 +341,9 @@ mvn -B test
 | `BillingIT` | 10 条，走 MockMvc + 真实 session：试算=结算=明细相加且 `booking.amount` 与 `bill.total_amount` 同源；**改房型价不回溯已结算账单**（同时证明新开一单确实用了新价，不是缓存）；规则命中改写金额且规则名进快照、删规则后快照仍读得出；停用规则不参与计价；粒度 60→30 让同一张单少收 10 元；超时补收与早退不退；只有 CHECKED_OUT 能结算且不能重复结算（账单恒为一行）；取消单试算返 `3007 NOTHING_TO_BILL`；全日房起步覆盖 22 小时、加时才收超时费；**清空规则的日期/星期/房型限制必须真的落库并改变计价**（MyBatis-Plus 默认更新策略会跳过 null 字段） |
 | `StatsAggregatorTest` | **17 条纯单测，不起容器**：营业日归属与横轴旋转的表驱动（含"06:00 前算前一天"与"同一切割点换成 04:00 就归另一天"）；跨零点全日房只算一个房晚但热力摊两个营业日；凌晨单落在轴尾；取消/释放单不计；营收只认已结算而待结算单列；超时/早退计数；出租率按不同房间数算；区间外单不进任何一天（**这条当场抓出排名与热度没按区间过滤的 bug**）；排行次序；平均出租率按加权而非均值 |
 | `StatsIT` | 6 条，走 MockMvc + 真 MySQL：日序列与合计（参数从 SQL 一路到 JSON 都对）、**05:00 的单在真实数据上确实归前一天且查后一天时不出现**、热度横轴旋转（slot 20 / hour 2）、排行只统计区间内、民宿之间隔离、CSV 带 BOM 与合计行 |
+| `ConcurrencyBenchIT` | 10/20/50 三档并发 × 10 轮，每轮 N 线程经 `CyclicBarrier` 抢同一间房同一时段：断言**每轮恰好 1 单成功**、其余全是 3003、无死锁/超时；并把 markdown 表格写到 `target/压测报告.md` |
+| `ConcurrencyBenchPool50IT` | 同上但连接池 50，与默认 10 对照 —— 证明串行点是房间行锁，不是连接数（实施计划 7.4） |
+| `OversellWithoutLockIT` | **反向对照**：`@SpyBean` 把 `lockOverlapping` 换成普通 `countOverlap`、隔离级别强行拉回 RR，其余不动 → 断言"必须出现超卖"。它若变绿在没有超卖，说明对照失效，正向的"零超卖"也就不再证明任何事 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
