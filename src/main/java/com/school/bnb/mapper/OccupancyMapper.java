@@ -33,4 +33,17 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
 
     @Select("select id from occupancy where booking_id = #{bookingId} limit 1")
     Long findRoomIdByBookingId(@Param("bookingId") Long bookingId);
+
+    /** 可售区间计算用：取某房在窗口内压着的所有块，按 block_start 升序好做区间相减。 */
+    @Select("""
+            select id, room_id, booking_id, start_time, end_time, block_start, block_end, kind, created_at
+            from occupancy
+            where room_id = #{roomId}
+              and block_start < #{endTime}
+              and block_end > #{startTime}
+            order by block_start
+            """)
+    java.util.List<Occupancy> findBlocksIn(@Param("roomId") Long roomId,
+                                           @Param("startTime") LocalDateTime startTime,
+                                           @Param("endTime") LocalDateTime endTime);
 }

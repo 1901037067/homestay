@@ -97,11 +97,37 @@ GET  /api/properties     POST / PUT /{id} / DELETE /{id}
 GET  /api/room-types     ?propertyId=           POST / PUT /{id} / DELETE /{id}
 GET  /api/rooms          ?page&size&propertyId&roomTypeId&status&keyword
                          POST / PUT /{id} / PATCH /{id}/status / DELETE /{id}
+POST /api/bookings                下单（status 只接受 HELD / CONFIRMED）
+GET  /api/bookings                ?page&size&status&roomId&keyword&from&to
+GET  /api/bookings/{id}
+PUT  /api/bookings/{id}/times     改期：删旧占用→重跑冲突检测→插新占用，同一事务
+POST /api/bookings/{id}/confirm | /cancel | /check-in | /check-out | /extend
+GET  /api/rooms/availability      ?propertyId&start&end&minHours  → 可售房间
+GET  /api/rooms/{id}/availability ?start&end&minHours             → 空闲区间列表
 ```
 
 删除守卫（实施计划 2.6）：房间有历史订单 → `2002 ROOM_HAS_HISTORY`；民宿/房型有下级数据 →
 `2013 HAS_CHILDREN`；同民宿下房号重复 → `2012 DUPLICATE_KEY`。下架走
 `PATCH /api/rooms/{id}/status {"status":"OFFLINE"}`，不要试图删房间。
+
+## 预订内核的三条规则
+
+W3 落地时把计划里两处含糊的地方定成了明确规则，改代码前先看这段：
+
+1. **可售窗口约束的是入住时刻**，不是结束时刻。全日房模板 14:00 入住、次日 12:00 离，
+   天然落在 `08:00–22:00` 内，所以**不需要给它写"豁免"分支**（计划 2.5 原本设想要写一条）。
+2. **起步时长只约束"同一天内结束"的请求。** 全日房必然跨天，因此自动不受 `min_hours` 限制。
+   这两条都比"判断这个房型算不算全日房"要稳 —— 房型表里全日房和钟点房共用同一套时段字段。
+3. **退房删掉的是含未来缓冲的整块。** 客人 16:00 实际退房，原单 14:00–18:00 + 45min 缓冲，
+   删行之后 16:00 起就可售。缓冲保护的是"计划中的翻台"，人走了决定权交回前台；
+   要把清扫做成真正的闭环，做的是加分项 4（落 `CLEANING` 行 + 完成打点），不是留一行假占用。
+
+`/api/rooms/{id}/availability` **只做区间相减，不套可售窗口**：可售性是"这段能不能卖"的业务判断，
+由 create 在锁外先拒、内核在锁内兜住；房态日历要画的是"这段时间是不是空的"。
+两件事混在一个接口里，日历会出现说不清楚的洞。
+
+预占超时回收由 `HoldReleaseJob` 每 60 秒跑一次（`bnb.hold.release-interval-ms` 可调）。
+它调的是内核的 `@Transactional` 方法而不是自己写 SQL —— 同类内部调用会绕过 Spring 代理让事务静默失效。
 
 ## 测试
 
@@ -114,6 +140,7 @@ mvn -B test
 | `FlywaySchemaIT` | 迁移真的建出 6 张 InnoDB/utf8mb4 表；`uk_booking_kind` 确实是两列；6 个外键齐备；`idx_block` 列序正确；DATETIME 不被时区换算 |
 | `BookingKernelIT` | 并发抢同一时段恰好一单成功；边界相接不算冲突；45 分钟清扫缓冲能挡住近邻单；跨零点全日房覆盖次日上午；取消即删占用行并可再售；**反向对照：不走行锁时数据库自己不拦两个重叠区间**；非法区间被拒 |
 | `RoomCatalogIT` | 民宿→房型→房间三级增改查且列表带出上级名称；房间有历史订单禁删（含"订单已取消但仍有历史"这一例）；有下级数据禁删民宿与房型；状态筛选、房号搜索、翻页不重不漏；房型不能挂到别的民宿下 |
+| `BookingFlowIT` | 14 条：HELD→CONFIRMED→IN_USE→CHECKED_OUT 全流转且退房释放占用；非法跃迁被拒并提示可达状态；改期改写占用、撞车时**旧占用回滚**、改回原时段不被自己挡住；加时延长占用块 / 撞车被拒 / 不推出可售窗口；起步时长只约束当天、可售窗口只约束入住时刻；预占过期回收只动 HELD；空闲区间含缓冲相减；可售房间随取消而回归 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。

@@ -2,6 +2,8 @@ package com.school.bnb.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.school.bnb.entity.Room;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
@@ -18,4 +20,25 @@ public interface RoomMapper extends BaseMapper<Room> {
      */
     @Select("select id from room where id = #{roomId} for update")
     Long selectForUpdate(@Param("roomId") Long roomId);
+
+    /**
+     * 某时间窗内仍可整段卖出的房间。用 NOT EXISTS 一条 SQL 搞定，
+     * 别在 Java 里对每个房间各发一次 countOverlap —— 那会变成 N+1。
+     */
+    @Select("""
+            <script>
+            select r.id, r.property_id, r.room_type_id, r.room_no, r.floor_no, r.status, r.created_at, r.updated_at
+            from room r
+            where r.status = 'ON_SALE'
+            <if test="propertyId != null"> and r.property_id = #{propertyId} </if>
+              and not exists (
+                select 1 from occupancy o
+                where o.room_id = r.id and o.block_start &lt; #{endTime} and o.block_end &gt; #{startTime}
+              )
+            order by r.property_id, r.room_no
+            </script>
+            """)
+    List<Room> findAvailable(@Param("propertyId") Long propertyId,
+                             @Param("startTime") LocalDateTime startTime,
+                             @Param("endTime") LocalDateTime endTime);
 }
