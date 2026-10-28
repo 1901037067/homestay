@@ -7,6 +7,8 @@ const RoomListView = () => import('./views/room/RoomListView.vue')
 const RoomTypeListView = () => import('./views/room/RoomTypeListView.vue')
 const PropertyListView = () => import('./views/room/PropertyListView.vue')
 const RoomCalendarView = () => import('./views/calendar/RoomCalendarView.vue')
+const OrdersView = () => import('./views/booking/OrdersView.vue')
+const PriceRuleView = () => import('./views/billing/PriceRuleView.vue')
 const OperationLogView = () => import('./views/system/OperationLogView.vue')
 
 // hash 模式：将来前端是静态资源托管，不需要服务端 rewrite
@@ -20,9 +22,11 @@ const router = createRouter({
       children: [
         { path: '', component: DashboardView },
         { path: 'calendar', component: RoomCalendarView },
+        { path: 'orders', component: OrdersView },
         { path: 'rooms', component: RoomListView },
         { path: 'room-types', component: RoomTypeListView },
         { path: 'properties', component: PropertyListView },
+        { path: 'rate-rules', component: PriceRuleView },
         { path: 'logs', component: OperationLogView }
       ]
     }

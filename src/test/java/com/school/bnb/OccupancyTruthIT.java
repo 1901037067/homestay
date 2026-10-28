@@ -55,7 +55,7 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         Long pid = propertyService.list().stream().filter(p -> p.name().equals("店" + tag))
                 .findFirst().orElseThrow().id();
         roomTypeService.save(new RoomTypeReq(null, pid, "型" + tag, new BigDecimal("100.00"),
-                minHours, new BigDecimal("20.00"), cleanBefore, cleanAfter,
+                minHours, new BigDecimal("20.00"), null, cleanBefore, cleanAfter,
                 LocalTime.of(14, 0), LocalTime.of(12, 0)));
         Long tid = roomTypeService.list(pid).get(0).id();
         return roomService.save(new RoomReq(null, pid, tid, "R" + tag, 1, Room.ON_SALE));

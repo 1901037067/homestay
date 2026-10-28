@@ -223,6 +223,9 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 账单：与订单列表共用同一个组件，试算/快照的区别由后端 snapshot 标志说，不在这里各写一份 -->
+    <BillDialog ref="billRef" v-model="billDlg" @settled="load" />
   </div>
 </template>
 
@@ -231,6 +234,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Refresh } from '@element-plus/icons-vue'
 import http from '../../api'
+import BillDialog from '../../components/BillDialog.vue'
 import { addMinutes, clock, diffMinutes, fmt, humanMinutes, parse } from '../../utils/dtime'
 
 const properties = ref([])
@@ -430,7 +434,16 @@ async function openDetail(b) {
 function actionsFor(b) {
   if (!b) return []
   if (b.kind === 'CLEANING') {
-    return [{ label: '清扫完成', cmd: 'clean', type: 'primary' }]
+    const acts = [{ label: '清扫完成', cmd: 'clean', type: 'primary' }]
+    // 退房瞬间 ROOM 行换成了 CLEANING 行，这张单在日历上就只剩这一块。
+    // 结算必须挂在这里，否则前台刚点完退房就找不到"收钱"这个按钮了
+    if (b.bookingStatus === 'CHECKED_OUT') {
+      acts.push({ label: '账单', cmd: 'bill', type: 'default' })
+      acts.push({ label: '结算', cmd: 'settle', type: 'success' })
+    } else if (b.bookingStatus === 'SETTLED') {
+      acts.push({ label: '账单', cmd: 'bill', type: 'default' })
+    }
+    return acts
   }
   const map = {
     HELD: [
@@ -440,12 +453,20 @@ function actionsFor(b) {
     CONFIRMED: [
       { label: '入住', cmd: 'check-in', type: 'primary' },
       { label: '改期', cmd: 'edit-reschedule', type: 'default' },
+      { label: '报价', cmd: 'bill', type: 'default' },
       { label: '取消', cmd: 'cancel', type: 'danger' }
     ],
     IN_USE: [
       { label: '加时', cmd: 'edit-extend', type: 'default' },
+      { label: '报价', cmd: 'bill', type: 'default' },
       { label: '退房', cmd: 'check-out', type: 'primary' }
-    ]
+    ],
+    // 退房之后才结得了账：住了多久，到这一刻才定下来
+    CHECKED_OUT: [
+      { label: '账单', cmd: 'bill', type: 'default' },
+      { label: '结算', cmd: 'settle', type: 'primary' }
+    ],
+    SETTLED: [{ label: '账单', cmd: 'bill', type: 'default' }]
   }
   return map[b.bookingStatus] || []
 }
@@ -459,6 +480,14 @@ async function run(a) {
     editing.value = 'extend'
     return
   }
+  if (a.cmd === 'bill') {
+    await openBill()
+    return
+  }
+  if (a.cmd === 'settle') {
+    await doSettle()
+    return
+  }
   submitting.value = true
   try {
     if (a.cmd === 'clean') {
@@ -470,6 +499,33 @@ async function run(a) {
     }
     detailDlg.value = false
     await load()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    submitting.value = false
+  }
+}
+
+// ------------------------------------------------------------ 账单与结算
+
+const billDlg = ref(false)
+const billRef = ref()
+
+function openBill() {
+  billDlg.value = true
+  return billRef.value.open(detail.value.bookingId)
+}
+
+async function doSettle() {
+  submitting.value = true
+  try {
+    const id = detail.value.bookingId
+    await http.post(`/bookings/${id}/settle`)
+    ElMessage.success('已结算')
+    detailDlg.value = false
+    await load()
+    billDlg.value = true
+    billRef.value.open(id)   // 结算完顺手把那张快照摊开，前台不用回列表再点一次
   } catch {
     /* 拦截器已提示 */
   } finally {

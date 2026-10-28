@@ -71,6 +71,8 @@ public class RoomTypeService {
         t.setBasePrice(req.basePrice());
         t.setMinHours(req.minHours());
         t.setExtraHourPrice(req.extraHourPrice());
+        // 粒度是 1 分钟以下的值没有意义，且会放大切片次数，所以下限兜到 1、缺省兜到 60
+        t.setChargeUnitMinutes(req.chargeUnitMinutes() == null ? 60 : Math.max(1, req.chargeUnitMinutes()));
         t.setCleanBeforeMinutes(req.cleanBeforeMinutes());
         t.setCleanAfterMinutes(req.cleanAfterMinutes());
         t.setFullDayStart(req.fullDayStart());

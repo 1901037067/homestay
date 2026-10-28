@@ -57,7 +57,7 @@ class OperationLogIT extends AbstractMysqlIT {
         PropertyVO p = propertyService.list().stream().filter(x -> x.name().equals("店" + tag))
                 .findFirst().orElseThrow();
         roomTypeService.save(new RoomTypeReq(null, p.id(), "型" + tag, new BigDecimal("100.00"),
-                2, new BigDecimal("20.00"), 0, 30, LocalTime.of(14, 0), LocalTime.of(12, 0)));
+                2, new BigDecimal("20.00"), null, 0, 30, LocalTime.of(14, 0), LocalTime.of(12, 0)));
         Long tid = roomTypeService.list(p.id()).get(0).id();
         return roomService.save(new RoomReq(null, p.id(), tid, "R" + tag, 1, Room.ON_SALE));
     }

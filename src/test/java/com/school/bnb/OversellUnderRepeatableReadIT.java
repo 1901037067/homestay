@@ -58,7 +58,7 @@ class OversellUnderRepeatableReadIT extends AbstractMysqlIT {
         Long pid = propertyService.list().stream().filter(p -> p.name().equals("RR店" + tag))
                 .findFirst().orElseThrow().id();
         roomTypeService.save(new RoomTypeReq(null, pid, "RR型" + tag, new BigDecimal("100.00"),
-                2, new BigDecimal("20.00"), 0, 0, LocalTime.of(14, 0), LocalTime.of(12, 0)));
+                2, new BigDecimal("20.00"), null, 0, 0, LocalTime.of(14, 0), LocalTime.of(12, 0)));
         Long tid = roomTypeService.list(pid).get(0).id();
         return roomService.save(new RoomReq(null, pid, tid, "RR" + tag, 1, Room.ON_SALE));
     }

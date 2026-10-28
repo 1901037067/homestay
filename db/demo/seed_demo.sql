@@ -10,8 +10,16 @@
 --
 -- 时间全部用 CURDATE() 相对生成，任何时候灌都"像刚发生的事"。
 -- 时段分布刻意做成晚间高峰，W7 的分时段热力图一开就有形状。
+--
+-- ⚠ 已知不一致（W8 整理演示数据时收掉）：下面这些 amount 是手写的，
+--   写在计费引擎（W6）之前，和 /bill/preview 算出来的数并不都相等。
+--   结算路径不会受影响 —— 真正点"结算"的单，金额由 PriceCalculator 说了算并写回 booking.amount；
+--   但已结算的历史行没有 bill 快照行，日历/列表上去看会显示"实时试算"而不是"账单快照"。
+--   要做成一致的历史数据，就把这批行的 status 改成 CHECKED_OUT 再逐笔调 /settle 生成真快照。
 -- ============================================================================
 
+-- bill 有指向 booking 的外键，必须比 booking 先删；顺序反了整段清理会卡在 1451 上
+delete from bill;
 delete from occupancy;
 delete from booking;
 
@@ -142,6 +150,25 @@ insert into occupancy (room_id, booking_id, start_time, end_time, block_start, b
 select b.room_id, b.id, b.start_time, b.end_time, b.start_time,
        date_add(b.end_time, interval 45 minute), 'ROOM'
 from booking b where b.booking_no = 'H20260301';
+
+-- ---------------------------------------------------------------------------
+-- 5) 全日房标识。sale_type 是"声明"不是"推断"（实施计划 2.5 第 2 条）：
+--    W5 之前用"跨天就算全日房"倒推，被 22:00→次日 00:30（只有 2.5 小时）证伪 ——
+--    所以这里逐条点名，绝不在 SQL 里写 `end_time 跨天 then FULL_DAY` 这种判断。
+--    漏掉这一段的后果是实的：全日单会被当成钟点房计费，
+--    起步只覆盖 3 小时，剩下的 19 小时全按超时单价收，账单能翻两三倍。
+--
+--    D20260009 原来做成 20:00 → 次日 12:00：既不是模板（全日房必须 14:00 入住）、
+--    也不是合法钟点（不许跨天），是这条规则之前的遗留行，这里顺手改回模板。
+-- ---------------------------------------------------------------------------
+update booking
+set start_time = date_sub(curdate(), interval 2 day) + interval 14 hour,
+    actual_check_in = date_sub(curdate(), interval 2 day) + interval 14 hour,
+    amount = 388.00
+where booking_no = 'D20260009';
+
+update booking set sale_type = 'FULL_DAY' where booking_no in
+  ('D20260003', 'D20260006', 'D20260009', 'D20260014', 'T20260102', 'F20260204');
 
 -- 自检：历史订单不该有房时间占用行；今天/未来的该有
 -- 只数 ROOM —— 退房后留下的 CLEANING 行是正常状态（W5 的清扫闭环）

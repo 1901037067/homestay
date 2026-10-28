@@ -5,6 +5,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -27,6 +28,20 @@ public class GlobalExceptionHandler {
         FieldError fe = e.getBindingResult().getFieldError();
         String msg = fe == null ? "参数不合法" : fe.getField() + " " + fe.getDefaultMessage();
         return R.fail(ErrorCode.BAD_REQUEST, msg);
+    }
+
+    /**
+     * 请求体压根不是合法 JSON，或字段类型对不上。
+     *
+     * <p>不归到 400 的话会一路落到下面的 {@code Exception} 分支变成 500，前端只能显示
+     * "服务内部错误"，而真实原因（比如用 curl/Postman 手滑发了一段 GBK 中文，
+     * 或者把数字填成了字符串）其实全在消息里。这是本机踩过一次之后补的。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<R<Void>> handleUnreadable(HttpMessageNotReadableException e) {
+        log.warn("请求体解析失败: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(R.fail(ErrorCode.BAD_REQUEST, "请求体不是合法 JSON，或字段类型不对"));
     }
 
     /**

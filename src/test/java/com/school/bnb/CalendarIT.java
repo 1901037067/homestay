@@ -54,7 +54,7 @@ class CalendarIT extends AbstractMysqlIT {
     private Room room(Long propertyId, int cleanAfter) {
         String tag = String.valueOf(System.nanoTime());
         roomTypeService.save(new RoomTypeReq(null, propertyId, "型" + tag, new BigDecimal("100.00"),
-                1, new BigDecimal("20.00"), 0, cleanAfter, LocalTime.of(14, 0), LocalTime.of(12, 0)));
+                1, new BigDecimal("20.00"), null, 0, cleanAfter, LocalTime.of(14, 0), LocalTime.of(12, 0)));
         Long typeId = roomTypeService.list(propertyId).get(0).id();
         return roomService.save(new RoomReq(null, propertyId, typeId, "R" + tag, 1, Room.ON_SALE));
     }

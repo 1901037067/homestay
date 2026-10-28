@@ -54,7 +54,7 @@ class BookingFlowIT extends AbstractMysqlIT {
         PropertyVO p = propertyService.list().stream()
                 .filter(x -> x.name().equals("店" + tag)).findFirst().orElseThrow();
         roomTypeService.save(new RoomTypeReq(null, p.id(), "型" + tag, new BigDecimal("100.00"),
-                minHours, new BigDecimal("20.00"), cleanBefore, cleanAfter,
+                minHours, new BigDecimal("20.00"), null, cleanBefore, cleanAfter,
                 LocalTime.of(14, 0), LocalTime.of(12, 0)));
         RoomTypeVO t = roomTypeService.list(p.id()).get(0);
         return roomService.save(new RoomReq(null, p.id(), t.id(), "R" + tag, 1, Room.ON_SALE));

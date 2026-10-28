@@ -77,7 +77,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  House, Grid, Tickets, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document
+  House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document, PriceTag
 } from '@element-plus/icons-vue'
 import { THEME_MODES, useTheme } from '../composables/useTheme'
 import http from '../api'
@@ -89,9 +89,11 @@ const { mode, setMode } = useTheme()
 const nav = [
   { path: '/', label: '概览', icon: Grid, desc: '今日房态与经营概况' },
   { path: '/calendar', label: '房态日历', icon: Calendar, desc: '点空白格开单，块上画的是含清扫缓冲的占用' },
+  { path: '/orders', label: '订单', icon: Tickets, desc: '全部订单与账单，退房后待结算在这里收' },
   { path: '/rooms', label: '房间', icon: OfficeBuilding, desc: '具体房间的增删改与上下架' },
-  { path: '/room-types', label: '房型', icon: Tickets, desc: '定价、起步时长与清扫缓冲' },
+  { path: '/room-types', label: '房型', icon: Ticket, desc: '定价、起步时长与清扫缓冲' },
   { path: '/properties', label: '民宿', icon: House, desc: '门店与营业日切割点' },
+  { path: '/rate-rules', label: '价格规则', icon: PriceTag, desc: '按日期、星期、时段覆盖平时价' },
   { path: '/logs', label: '操作日志', icon: Document, desc: '谁在什么时候改了什么' }
 ]
 

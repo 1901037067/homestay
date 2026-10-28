@@ -3,6 +3,7 @@ package com.school.bnb.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.school.bnb.entity.Booking;
 import com.school.bnb.vo.HoldCandidate;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.apache.ibatis.annotations.Param;
@@ -75,6 +76,16 @@ public interface BookingMapper extends BaseMapper<Booking> {
     int extendIfInUse(@Param("id") Long id,
                       @Param("end") LocalDateTime end,
                       @Param("expectedEnd") LocalDateTime expectedEnd);
+
+    /**
+     * 结算。<b>把金额和状态在同一条 update 里写完</b>，不留"状态改了、钱还没落"的中间态；
+     * 状态条件写在 where 里，重复点结算的第二次返回 0。
+     */
+    @Update("""
+            update booking set status = 'SETTLED', amount = #{amount}
+            where id = #{id} and status = 'CHECKED_OUT'
+            """)
+    int settleIfCheckedOut(@Param("id") Long id, @Param("amount") BigDecimal amount);
 
     /**
      * 幂等回放用。当前读 —— 普通 SELECT 在 RR 下可能看不到另一笔刚提交的同 requestId 订单，

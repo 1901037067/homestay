@@ -48,7 +48,7 @@ class RoomCatalogIT extends AbstractMysqlIT {
 
     private RoomTypeVO newRoomType(Long propertyId, int cleanAfter) {
         roomTypeService.save(new RoomTypeReq(null, propertyId, "大床房-" + System.nanoTime(),
-                new BigDecimal("200.00"), 3, new BigDecimal("30.00"), 0, cleanAfter,
+                new BigDecimal("200.00"), 3, new BigDecimal("30.00"), null, 0, cleanAfter,
                 LocalTime.of(14, 0), LocalTime.of(12, 0)));
         return roomTypeService.list(propertyId).stream()
                 .sorted((a, b) -> Long.compare(b.id(), a.id()))

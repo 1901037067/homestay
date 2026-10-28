@@ -3,6 +3,7 @@ package com.school.bnb.booking;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.entity.Room;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
@@ -111,15 +112,25 @@ public final class SellPolicy {
      * 以及防止前端把全日房改成任意时段来绕开定价。
      */
     private static Verdict fullDayCheck(Rule r, LocalDateTime start, LocalDateTime end) {
-        LocalDateTime expectStart = start.toLocalDate().atTime(r.fullDayStart());
-        LocalDateTime expectEnd = r.fullDayEnd().isAfter(r.fullDayStart())
-                ? start.toLocalDate().atTime(r.fullDayEnd())
-                : start.toLocalDate().plusDays(1).atTime(r.fullDayEnd());   // 次日结束
-        if (!start.equals(expectStart) || !end.equals(expectEnd)) {
+        LocalDateTime[] tpl = fullDayRange(start.toLocalDate(), r.fullDayStart(), r.fullDayEnd());
+        if (!start.equals(tpl[0]) || !end.equals(tpl[1])) {
             return fail(ErrorCode.INVALID_TIME_RANGE,
-                    "全日房时段固定为 " + expectStart + " → " + expectEnd + "，请勿自行指定区间");
+                    "全日房时段固定为 " + tpl[0] + " → " + tpl[1] + "，请勿自行指定区间");
         }
         return Verdict.OK;
+    }
+
+    /**
+     * 房型全日房模板在某个入住日期上的绝对区间。
+     *
+     * <p>提成公开方法是因为<b>计费也要用它</b>：全日房的"起步价覆盖时长"就是这个模板的时长
+     * （14:00→次日 12:00 即 22 小时），加时的部分才按超时单价收。两处各写一遍
+     * "end 小于 start 就算次日"，迟早一边改了另一边没改，于是账单和下单校验互相矛盾。
+     */
+    public static LocalDateTime[] fullDayRange(LocalDate date, LocalTime start, LocalTime end) {
+        LocalDateTime s = date.atTime(start);
+        LocalDateTime e = end.isAfter(start) ? date.atTime(end) : date.plusDays(1).atTime(end);
+        return new LocalDateTime[]{s, e};
     }
 
     private static Verdict fail(int code, String reason) {

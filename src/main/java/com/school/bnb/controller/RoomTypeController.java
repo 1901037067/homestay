@@ -52,7 +52,7 @@ public class RoomTypeController {
 
     private static RoomTypeReq withId(RoomTypeReq req, Long id) {
         return new RoomTypeReq(id, req.propertyId(), req.name(), req.basePrice(), req.minHours(),
-                req.extraHourPrice(), req.cleanBeforeMinutes(), req.cleanAfterMinutes(),
-                req.fullDayStart(), req.fullDayEnd());
+                req.extraHourPrice(), req.chargeUnitMinutes(), req.cleanBeforeMinutes(),
+                req.cleanAfterMinutes(), req.fullDayStart(), req.fullDayEnd());
     }
 }

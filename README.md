@@ -17,24 +17,29 @@ springdoc-openapi 2.3.0 · Vue 3 + Vite + Element Plus · JUnit 5 + Testcontaine
 ```
 pom.xml                     单模块 Maven（不做多模块）
 src/main/java/com/school/bnb
-├── controller             认证 / 探针 / 民宿 / 房型 / 房间
-├── service                Auth + 房源域三个 Service（含删除守卫）
-├── mapper                 含手写的 selectForUpdate（MyBatis-Plus 不提供 FOR UPDATE）
-├── entity                 6 张表
+├── controller             认证 / 探针 / 民宿 / 房型 / 房间 / 预订 / 日历 / 账单 / 价格规则 / 日志
+├── service                房源域 + Booking（策略与装配）+ Calendar + Billing + RateRule + RoomContext
+├── mapper                 含手写的 selectForUpdate 与 lockOverlapping（MyBatis-Plus 不提供 FOR UPDATE）
+├── entity                 8 张表
 ├── dto                    请求体（带校验注解）
 ├── vo                     列表返回体（带出上级名称，前端不必逐行再查）
 ├── config                 MyBatis-Plus 分页拦截器
-├── booking                预订内核 BookingKernel —— 全项目唯一写 occupancy 的入口
-└── common                 统一返回 / 异常 / session 拦截器
-src/main/resources/db/migration  V1 结构、V2 结构性种子
-src/test/java/com/school/bnb     FlywaySchemaIT / BookingKernelIT / RoomCatalogIT / SeedPasswordHashTest
+├── booking                预订内核 BookingKernel —— 全项目唯一写 occupancy 的入口；
+│                          SellPolicy（可售性唯一出处）/ SaleType / BookingStateMachine
+├── billing                PriceCalculator —— 纯函数，不碰 DB 也不读时钟；RateRuleDef
+└── common                 统一返回 / 异常 / session 拦截器 / AuthContext
+src/main/resources/db/migration  V1 结构、V2 结构性种子、V3 幂等与售卖方式、V4 操作日志、V5 计费
+src/test/java/com/school/bnb     防超卖三件套 + 流转/日历/审计/计费 IT；billing/PriceCalculatorTest 纯单测
 db/demo/seed_demo.sql      演示流水（手动灌，不进 Flyway）
 frontend/src
 ├── styles/tokens.css      Apple 设计令牌 + Element Plus 变量覆盖（明暗双模）
 ├── styles/base.css        排版、卡片、分段控件、状态胶囊
 ├── composables/useTheme.js浅色 / 深色 / 跟随系统，持久化在 localStorage
 ├── layout/AppShell.vue    毛玻璃侧栏 + 浮动标题栏
-└── views                  登录 / 概览 / room 下三个管理页（路由级懒加载）
+├── components/BillDialog.vue  账单弹窗（日历与订单列表共用，试算/快照同一套渲染）
+├── utils/dtime.js         naive 本地时间的解析与格式化（不引 dayjs，避免偏移被算错）
+└── views                  登录 / 概览 / calendar 房态 / booking 订单 / room 三个管理页 /
+                           billing 价格规则 / system 操作日志（全部路由级懒加载）
 scripts/                   env.sh / env.ps1 / reset-demo.sh
 docker-compose.yml         开发期 MySQL
 ```
@@ -88,6 +93,14 @@ CSS 变量生效，没有覆盖 `.el-*` 类名，组件库升级不会崩。三�
 
 浅色 / 深色 / 跟随系统三档在右上角分段控件，选择存 `localStorage`，`auto` 档跟随系统实时切换。
 
+七个页面：概览 / 房态日历 / 订单 / 房间 / 房型 / 民宿 / 价格规则 / 操作日志。
+两条刻意的设计：
+
+- **房态日历是主操作台**（点空白格开单、点块做入住/退房/加时/结算/清扫确认），
+  因为前台的工作单位是"这间房这段时间归谁"，不是"这张订单"。
+- **「订单」页不是日历的重复**：退房后 ROOM 占用行被换成 CLEANING 行，等保洁点完、
+  或者客人第二天早上才来结账，日历上已经找不到那张单了。结算入口必须有第二个家。
+
 ## 接口（当前）
 
 ```
@@ -106,6 +119,10 @@ POST /api/rooms/{id}/cleaning-done  保洁完成，释放清扫占用
 GET  /api/rooms/availability      ?propertyId&start&end&minHours&saleType → 可售房间
 GET  /api/rooms/{id}/availability ?start&end&minHours             → 空闲区间列表
 GET  /api/calendar                ?propertyId&date                → 房态日历数据源
+GET  /api/bookings/{id}/bill      已结算返账单快照，未结算返实时试算（snapshot 字段区分）
+POST /api/bookings/{id}/bill/preview  按当前规则重算，不写库
+POST /api/bookings/{id}/settle        收款：落 bill 快照 + CHECKED_OUT→SETTLED
+GET  /api/rate-rules             ?propertyId=  POST / PUT /{id} / DELETE /{id}  价格规则
 GET  /api/operation-logs          ?page&size&action&entity&entityId&username
 ```
 
@@ -172,6 +189,36 @@ W3 落地、W4 之后被一轮审阅修正。改这块代码前先看这段：
 连接池显式跑在 READ COMMITTED（`application.yml`）。这是第二道防线，**不是**上面第 1 条的修复本身：
 `OversellUnderRepeatableReadIT` 把级别强行改回 RR 再跑真实入口并发，照样不超卖。
 
+## 计费（W6）
+
+钱的事全部由一个**不碰数据库、不读时钟的纯函数**算：`billing/PriceCalculator`。
+`BillingService` 只负责凑输入、守状态机、落快照。这么拆不是洁癖 ——
+取整、规则决胜、跨零点这几条口径只有纯函数才能被一组毫秒级、无容器的表驱动用例覆盖住。
+
+算账的口径（六条，答辩会逐条被问）：
+
+1. **起步价覆盖时长**：钟点房 = `min_hours × 60`；全日房 = 房型模板时长（14:00→次日 12:00 = 1320 分）。
+   所以全日房整体是一口 `base_price`，**只有加时的部分**才按超时单价收。
+2. **超时费向上取整到"计费粒度"**，粒度是房型上的 `charge_unit_minutes`（默认 60 = 不足一小时按一小时）。
+   是配置项不是写死：同一张 9:00→12:20 的单，粒度 60 收 1 小时、粒度 30 收半小时、粒度 1 按分钟线性折。
+3. **规则不叠加**。一个时刻只取一条，决胜 `priority` 升 → 房型级压过民宿级 → `id` 升（必须全序，
+   否则同一张单两次算出两个价，快照就成了看运气）。
+   规则维度是 `日期区间 ∧ 星期 ∧ 日内时段` 三块 AND，留空即不限；时段按半开区间 `[start, end)`，
+   `start > end` 表示跨零点窗口（22:00→02:00）。
+4. **起步价按入住时刻定价，超时段按各自起点定价**。跨节假日边界的长住单，起步用入住那天的价、
+   后半段用假期价 —— 有意为之。
+5. **取整只在计费单元一级**（HALF_UP 到分），明细金额是它包含的单元之和，合计是明细之和。
+   **打印出来的分项永远加得上合计。**
+6. **早退不退、晚走要补**：计费终点取 `max(计划离店, 实际退房)`，两种情况都会在账单上写一句人话提示。
+
+**试算不落库，结算才落快照。** `bill` 表存当时的单价、分钟数和命中的规则名（`detail_json`），
+改规则、改房型价都不回溯已结算账单；返回体的 `snapshot` 标志区分"实时试算"与"已结算快照"，
+界面上必须显示这个区别，否则前台会把两者当成系统自相矛盾。
+
+结算守的是内核第 3 条铁律：`update booking set status='SETTLED', amount=? where id=? and status='CHECKED_OUT'`
+的影响行数才是裁判，赢了自己插 `bill` 行 —— 顺序反过来的话并发双击会靠唯一键报错回滚，
+正确性来自约束冲突而不是来自状态机，错误信息还难看。
+
 ## 测试
 
 ```bash
@@ -180,7 +227,7 @@ mvn -B test
 
 | 测试 | 证明什么 |
 |---|---|
-| `FlywaySchemaIT` | 迁移真的建出 6 张 InnoDB/utf8mb4 表；`uk_booking_kind` 确实是两列；6 个外键齐备；`idx_block` 列序正确；DATETIME 不被时区换算 |
+| `FlywaySchemaIT` | 迁移真的建出 8 张 InnoDB/utf8mb4 表；`uk_booking_kind` 确实是两列；8 个外键齐备；`uk_booking_bill` 单列唯一（一单一账单）；`idx_block` 列序正确；DATETIME 不被时区换算 |
 | `BookingKernelIT` | **直接调内核**的边界用例：并发抢同一时段恰好一单成功；边界相接不算冲突；45 分钟清扫缓冲能挡住近邻单；跨零点占用覆盖次日上午；取消即删占用行并可再售；**反向对照：不走行锁时数据库自己不拦两个重叠区间**；非法区间被拒。<br>⚠ 它只覆盖内核那一层 —— 内核里 `FOR UPDATE` 恰好是事务第一条语句，所以快照问题测不出来。真实入口由下面两个类覆盖 |
 | `OversellAuditIT` | 4 条，一组对照实验：① RR 下"锁后普通 SELECT"确实读到旧快照并超卖（机制）；② 同样的交错换成当前读就看不到冲突不存在（**证明解药是当前读**）；③ 真实入口 `BookingService.create` 并发 12 轮零超卖（回归防线）；④ 同一 `requestId` 重复提交返回原单 |
 | `OversellUnderRepeatableReadIT` | 把连接池隔离级别**强行改回 RR** 再跑真实入口并发 12 轮。过 —— 说明修复不依赖 READ COMMITTED 配置 |
@@ -189,6 +236,8 @@ mvn -B test
 | `CalendarIT` | 6 条：窗口按切割点旋转而不是自然日；凌晨 2 点的单归前一个营业日且不重复出现在次日；跨零点全日房在同一窗口里是完整一块；退房与取消后块消失；只返回该店房间且维修/下架房也出现（前端灰显而不是消失）；块上带客人姓名与订单状态 |
 | `OccupancyTruthIT` | 7 条：超时未退房时后续时段必须被挡；退房后恢复可售；提前入住把入住前的空档也占住；可售查询算上新单自己的入住前缓冲（与内核同口径）；加时必须真的变长（这条检查曾在重写时被删掉）；全日房可以加时/延迟退房；同一 `requestId` 带不同内容明确拒绝 |
 | `OperationLogIT` | 4 条，走 MockMvc + 真实 session：一次完整流转留下开单/入住/退房三条且都带操作人；前后值确实是两份快照（记同一个引用会让审计白记）；房间上下架留痕；取消留痕。**必须走 HTTP 层** —— `username` 来自登录拦截器写的 `AuthContext`，直接调 service 会一路是 null 而没人发现 |
+| `PriceCalculatorTest` | **30 条纯单测，不起容器、不连库**：14 行表驱动金额表（订满起步 / 短于起步不退 / 超时 61 分钟按两小时 / 同一张单在粒度 60·30·1 下的三种结果 / 周末倍率同时改写起步与超时 / 跨星期边界 / 深夜窗口与 22:00 整的半开区间边界 / 国庆一口价命中与不命中 / 全日房加时 / 倍率产生小数时四舍五入）；结构类（合计恒等于明细之和、连续同价并档、规则切换处必须断成两条、起步价标"打包"免被误当小时价乘）；决胜类（priority、房型级压民宿级、同分按 id 且与传入顺序无关、日期闭区间、跨零点时段、三块条件必须同时满足）。<br>另有一条**基准日期星期自检** —— 第一次写这张表时把 2026-10-08 当成周五（实际周四），正是这条当场把 5 个用例全打红 |
+| `BillingIT` | 9 条，走 MockMvc + 真实 session：试算=结算=明细相加且 `booking.amount` 与 `bill.total_amount` 同源；**改房型价不回溯已结算账单**（同时证明新开一单确实用了新价，不是缓存）；规则命中改写金额且规则名进快照、删规则后快照仍读得出；停用规则不参与计价；粒度 60→30 让同一张单少收 10 元；超时补收与早退不退；只有 CHECKED_OUT 能结算且不能重复结算（账单恒为一行）；取消单试算返 `3007 NOTHING_TO_BILL`；全日房起步覆盖 22 小时、加时才收超时费 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
@@ -203,7 +252,10 @@ mvn -B test
 | 提前入住 | 允许，由前台自行判断；但**实际入住时刻要进系统**并扩展占用区间（见上节），否则会把已住人的房再卖一次 |
 | 延迟退房 | 不做审批流。日历标红 + tooltip 提示超时时长，由人去沟通；要正式延长就走加时接口 |
 | 退房后谁确认可出售 | 保洁。**已实现**：退房落 `CLEANING` 占用行，前台/保洁点"清扫完成"才释放（`POST /api/rooms/{id}/cleaning-done`）。日历上待清扫的块画成中性斜纹，点它即可释放。不加通知器或物联网设备，点一下就够 |
-| 谁改了什么 | `operation_log` 记下开单/确认/入住/退房/加时/改期/取消/清扫/房间状态变更，含操作人与前后值 JSON，界面在「操作日志」页 |
+| 谁改了什么 | `operation_log` 记下开单/确认/入住/退房/加时/改期/取消/清扫/房间状态变更/结算，含操作人与前后值 JSON，界面在「操作日志」页 |
+| 提前退房收不收 | **不退差价**，按原单已订时长收，账单上写一句"客人提前退房，不退差价" |
+| 超时未退房收不收 | **按实际退房时刻补收超时费**（计费终点 = `max(计划离店, 实际退房)`）。与上一行合起来就是"早退不退、晚走要补" |
+| 结算的时机 | 退房之后才结算 —— 住了多久到退房那一刻才定下来。日历上退房后那个块（待清扫）直接给"账单/结算"两个按钮，不用切页 |
 
 ## 已知约束
 
@@ -226,11 +278,18 @@ mvn -B test
 - **房态日历的横轴从营业日切割点起转**，不是 00:00 起。窗口是 `[dayCut, 次日 dayCut)`，
   块按 `block_start/block_end`（含清扫缓冲）定位，所以一段没人住的空档也可能画着块 ——
   那是缓冲，不是 bug。
-- **页面整片空白、控制台报 `Unhandled error during execution of render function at <某图标>`，
+- **页面整片空白、控制台报 `Unhandled error during execution of render/setup function`，
   多半不是代码问题，是 Vite 的依赖预打包缓存脏了。** 反复改 `AppShell.vue` 这类被多处引用的
-  组件的 import 列表时容易触发。修法：
+  组件的 import 列表时容易触发 —— W6 加"订单/价格规则"两页时**又复发一次**，触发点是给
+  `@element-plus/icons-vue` 新增一个具名导入（`Ticket`），而该依赖已在缓存里。修法：
   `rm -rf frontend/node_modules/.vite` 然后重启 dev server。
   先确认端口没被上一个 vite 进程占着（它会静默改端口到 5174，你刷新的其实还是那个坏掉的 5173）。
+  排查时先分清两种失败：图标本身坏不坏可以用 SSR 单测（`renderToString(h(m.Ticket))`），
+  上次用它证明了 `Document` 没问题、锅在缓存 —— 别一上来就改业务代码。
+- **演示流水里的 `amount` 是手写的**（写在计费引擎之前），和 `/bill/preview` 算出来的数并不都相等；
+  已结算的历史行也没有 `bill` 快照行，界面上会显示"实时试算"而不是"账单快照"。
+  真正点过结算的单不受影响（金额由 `PriceCalculator` 说了算并写回 `booking.amount`）。
+  W8 整理演示数据时收掉：把那批行的状态改成 `CHECKED_OUT` 再逐笔调 `/settle` 生成真快照。
 - **`mvn test` 不带 `clean` 时，删掉的资源文件在 `target/classes` 里的旧副本不会被清除** ——
   删了个 `V3__x.sql` 又新建 `V3__y.sql`，Flyway 会报 "Found more than one migration with version 3"，
   而源码目录里明明只有一个 V3。

@@ -21,6 +21,9 @@ public class RoomType {
     private Integer minHours;
     private BigDecimal extraHourPrice;
 
+    /** 超时费计费粒度（分钟）：超时时长向上取整到它的整数倍。见实施计划 7.5。 */
+    private Integer chargeUnitMinutes;
+
     /** 总纲 B1：折进 occupancy.block_start/block_end 的清扫缓冲。 */
     private Integer cleanBeforeMinutes;
     private Integer cleanAfterMinutes;

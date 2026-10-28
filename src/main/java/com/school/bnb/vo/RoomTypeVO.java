@@ -12,6 +12,7 @@ public record RoomTypeVO(
         BigDecimal basePrice,
         Integer minHours,
         BigDecimal extraHourPrice,
+        Integer chargeUnitMinutes,
         Integer cleanBeforeMinutes,
         Integer cleanAfterMinutes,
         LocalTime fullDayStart,
@@ -20,7 +21,8 @@ public record RoomTypeVO(
 
     public static RoomTypeVO of(RoomType t, String propertyName, long roomCount) {
         return new RoomTypeVO(t.getId(), t.getPropertyId(), propertyName, t.getName(), t.getBasePrice(),
-                t.getMinHours(), t.getExtraHourPrice(), t.getCleanBeforeMinutes(), t.getCleanAfterMinutes(),
+                t.getMinHours(), t.getExtraHourPrice(), t.getChargeUnitMinutes(),
+                t.getCleanBeforeMinutes(), t.getCleanAfterMinutes(),
                 t.getFullDayStart(), t.getFullDayEnd(), roomCount);
     }
 }

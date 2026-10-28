@@ -53,17 +53,20 @@ public class BookingService {
     private final RoomTypeMapper roomTypeMapper;
     private final PropertyMapper propertyMapper;
     private final OccupancyMapper occupancyMapper;
+    private final RoomContext roomContext;
     private final OperationLogService opLog;
 
     public BookingService(BookingKernel kernel, BookingMapper bookingMapper, RoomMapper roomMapper,
                           RoomTypeMapper roomTypeMapper, PropertyMapper propertyMapper,
-                          OccupancyMapper occupancyMapper, OperationLogService opLog) {
+                          OccupancyMapper occupancyMapper, RoomContext roomContext,
+                          OperationLogService opLog) {
         this.kernel = kernel;
         this.bookingMapper = bookingMapper;
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.propertyMapper = propertyMapper;
         this.occupancyMapper = occupancyMapper;
+        this.roomContext = roomContext;
         this.opLog = opLog;
     }
 
@@ -317,20 +320,10 @@ public class BookingService {
     private record Ctx(Room room, RoomType type, Property property) {
     }
 
+    /** 取房间上下文这件事本身交给 {@link RoomContext}，计费走的是同一条链，不允许两处各判各的空值。 */
     private Ctx ctx(Long roomId) {
-        Room room = roomMapper.selectById(roomId);
-        if (room == null) {
-            throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + roomId);
-        }
-        RoomType type = roomTypeMapper.selectById(room.getRoomTypeId());
-        if (type == null) {
-            throw new BizException(ErrorCode.ROOM_TYPE_NOT_FOUND, "房间未配置房型: " + roomId);
-        }
-        Property property = propertyMapper.selectById(room.getPropertyId());
-        if (property == null) {
-            throw new BizException(ErrorCode.PROPERTY_NOT_FOUND, "房型未配置民宿: " + room.getPropertyId());
-        }
-        return new Ctx(room, type, property);
+        RoomContext.Data d = roomContext.of(roomId);
+        return new Ctx(d.room(), d.type(), d.property());
     }
 
     private BookingVO toVO(Booking b, Ctx ctx) {

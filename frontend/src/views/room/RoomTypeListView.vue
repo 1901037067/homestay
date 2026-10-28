@@ -31,6 +31,11 @@
             <span class="bnb-num">{{ row.minHours }}h · ¥{{ row.extraHourPrice }}/h</span>
           </template>
         </el-table-column>
+        <el-table-column label="计费粒度" width="100" align="right">
+          <template #default="{ row }">
+            <span class="bnb-num">{{ row.chargeUnitMinutes }}′</span>
+          </template>
+        </el-table-column>
         <el-table-column label="清扫缓冲" width="130" align="right">
           <template #default="{ row }">
             <span class="bnb-num">前 {{ row.cleanBeforeMinutes }}′ / 后 {{ row.cleanAfterMinutes }}′</span>
@@ -82,14 +87,23 @@
           <el-form-item label="起步时长（小时）" prop="minHours">
             <el-input-number v-model="form.minHours" :min="1" :max="24" style="width: 100%" />
           </el-form-item>
-          <div class="field">
-            <label>全日房时段</label>
-            <div class="pair-inner">
-              <el-time-picker v-model="form.fullDayStart" value-format="HH:mm:ss" placeholder="14:00" />
-              <el-time-picker v-model="form.fullDayEnd" value-format="HH:mm:ss" placeholder="次日 12:00" />
-            </div>
-            <div class="tip">结束时间早于开始时间即视为跨到次日。</div>
+          <el-form-item label="超时费计费粒度（分钟）" prop="chargeUnitMinutes">
+            <el-select v-model="form.chargeUnitMinutes" style="width: 100%">
+              <el-option v-for="u in UNITS" :key="u.v" :label="u.t" :value="u.v" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div class="tip grain-tip">
+          粒度决定超时费怎么取整：60 = 不足一小时按一小时，30 = 不足半小时按半小时。
+        </div>
+
+        <div class="field">
+          <label>全日房时段</label>
+          <div class="pair-inner">
+            <el-time-picker v-model="form.fullDayStart" value-format="HH:mm:ss" placeholder="14:00" />
+            <el-time-picker v-model="form.fullDayEnd" value-format="HH:mm:ss" placeholder="次日 12:00" />
           </div>
+          <div class="tip">结束时间早于开始时间即视为跨到次日。</div>
         </div>
 
         <div class="pair">
@@ -137,6 +151,14 @@ const rules = {
   fullDayEnd: [{ required: true, message: '请选择结束', trigger: 'change' }]
 }
 
+const UNITS = [
+  { v: 60, t: '60 分钟（不足一小时按一小时）' },
+  { v: 30, t: '30 分钟（半小时一档）' },
+  { v: 15, t: '15 分钟' },
+  { v: 10, t: '10 分钟' },
+  { v: 1, t: '1 分钟（按分钟线性折算）' }
+]
+
 function empty() {
   return {
     id: null,
@@ -145,6 +167,7 @@ function empty() {
     basePrice: 100,
     minHours: 3,
     extraHourPrice: 30,
+    chargeUnitMinutes: 60,
     cleanBeforeMinutes: 0,
     cleanAfterMinutes: 45,
     fullDayStart: '14:00:00',

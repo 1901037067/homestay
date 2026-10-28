@@ -36,6 +36,13 @@ public final class ErrorCode {
     /** 该房间仍有人在住（含超时未退房），不能开新单。 */
     public static final int ROOM_OCCUPIED_BY_GUEST = 3006;
 
+    public static final int RULE_NOT_FOUND = 2020;
+    /** 规则自身的参数矛盾（倍率填 0、只有 validTo、房型不属于这家民宿等）。 */
+    public static final int RULE_INVALID = 2021;
+
+    /** 账单：已取消/未入住的订单不产生费用，没什么可试算的。 */
+    public static final int NOTHING_TO_BILL = 3007;
+
     private ErrorCode() {
     }
 }

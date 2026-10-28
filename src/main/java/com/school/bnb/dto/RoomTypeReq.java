@@ -15,6 +15,8 @@ public record RoomTypeReq(
         @NotNull @DecimalMin(value = "0.00", message = "不能为负") BigDecimal basePrice,
         @NotNull @Min(value = 1, message = "至少 1 小时") Integer minHours,
         @NotNull @DecimalMin(value = "0.00", message = "不能为负") BigDecimal extraHourPrice,
+        /** 超时费计费粒度。允许缺省，缺省 60 = "不足一小时按一小时"。 */
+        @Min(value = 1, message = "至少 1 分钟") Integer chargeUnitMinutes,
         @NotNull @Min(0) Integer cleanBeforeMinutes,
         @NotNull @Min(0) Integer cleanAfterMinutes,
         @NotNull LocalTime fullDayStart,

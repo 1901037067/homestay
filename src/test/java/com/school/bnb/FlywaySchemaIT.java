@@ -19,7 +19,7 @@ class FlywaySchemaIT extends AbstractMysqlIT {
     private JdbcTemplate jdbc;
 
     @Test
-    @DisplayName("六张表全部建成，且都是 InnoDB + utf8mb4")
+    @DisplayName("八张表全部建成，且都是 InnoDB + utf8mb4")
     void tablesCreatedWithRightEngineAndCharset() {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select table_name, engine, table_collation
@@ -28,7 +28,8 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 """);
 
         assertThat(rows).extracting(r -> ((String) r.get("table_name")).toLowerCase())
-                .contains("sys_user", "property", "room_type", "room", "booking", "occupancy");
+                .contains("sys_user", "property", "room_type", "room", "booking", "occupancy",
+                        "rate_rule", "bill");
 
         assertThat(rows).allSatisfy(r -> {
             assertThat((String) r.get("engine")).isEqualTo("InnoDB");
@@ -66,7 +67,23 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 "fk_room_type",
                 "fk_booking_room",
                 "fk_occ_room",
-                "fk_occ_booking");
+                "fk_occ_booking",
+                "fk_rule_property",
+                "fk_bill_booking");
+    }
+
+    @Test
+    @DisplayName("uk_booking_bill 存在 —— 一张单只有一张账单，重复结算靠它兜底")
+    void billHasUniqueBookingKey() {
+        List<String> cols = jdbc.queryForList("""
+                select column_name
+                from information_schema.key_column_usage
+                where table_schema = database()
+                  and table_name = 'bill'
+                  and constraint_name = 'uk_booking_bill'
+                """, String.class);
+
+        assertThat(cols).containsExactly("booking_id");
     }
 
     @Test
