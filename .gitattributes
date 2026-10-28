@@ -1,0 +1,7 @@
+# 统一换行符：仓库内一律 LF，签出也保持 LF。
+# 不加这行的话，Windows 上 git 会把 .sh 转成 CRLF，Git Bash 执行 scripts/*.sh 会报
+# $'\r': command not found。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jar binary

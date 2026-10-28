@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: homestay-bnb
+
+  datasource:
+    # 全链路 naive 本地时间（实施计划 7.1）：
+    #   connectionTimeZone=SERVER           —— 跟随 MySQL 会话时区，不写死机器时区
+    #   forceConnectionTimeZoneToSession    —— 把会话时区显式 SET 上去，避免驱动/服务端不一致
+    #   preserveInstants=false              —— DATETIME 不做时区换算，存什么读什么
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:bnb}?connectionTimeZone=SERVER&forceConnectionTimeZoneToSession=true&preserveInstants=false&useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=utf8
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:bnb_dev_123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 默认 10 会让 JMeter 50 线程测出来的是排队时间而不是锁的开销（实施计划 7.4）
+      maximum-pool-size: ${HIKARI_MAX_POOL:50}
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+  mvc:
+    problemdetails:
+      enabled: false
+
+server:
+  port: 8080
+  servlet:
+    session:
+      # 答辩/演示中途掉线很难看，给 12 小时
+      timeout: 12h
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: info
+    com.school.bnb: info
+    # 调试冲突检测时打开，能直接看到 FOR UPDATE 与 countOverlap 的真实 SQL
+    com.school.bnb.mapper: debug

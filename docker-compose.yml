@@ -1,0 +1,25 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: bnb-mysql
+    # 显式钉死时区与字符集：跨零点订单和中文客人姓名都依赖这两项
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: bnb_dev_123
+      MYSQL_DATABASE: bnb
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - bnb-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pbnb_dev_123"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  bnb-mysql-data:
