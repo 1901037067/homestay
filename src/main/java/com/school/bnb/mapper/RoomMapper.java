@@ -29,6 +29,9 @@ public interface RoomMapper extends BaseMapper<Room> {
      * 已有块到 12:45，新单 13:00 入住、该房型入住前缓冲 30 分钟 → 新单实际 block 从 12:30 起，
      * 真冲突；但按 13:00 比就返回"可售"，前端点了再被内核拒。缓冲挂在 room_type 上，
      * 所以这里要 join 房型表，不能只在 Java 侧传一对固定区间进来。
+     *
+     * <p>三个 or 分支与 {@code OccupancyMapper.lockOverlapping} 严格同口径（含待清扫持续占用）。
+     * 这两处一旦分叉，就会出现"可售列表里有、点进去被拒"—— 本项目已经为这类分叉返工过一次。
      */
     @Select("""
             <script>
@@ -46,6 +49,8 @@ public interface RoomMapper extends BaseMapper<Room> {
                          and o.block_end &gt; date_sub(#{startTime}, interval rt.clean_before_minutes minute))
                      or (b.status = 'IN_USE' and now() &gt;= o.block_end
                          and date_add(#{endTime}, interval rt.clean_after_minutes minute) &gt; o.block_end)
+                     or (o.kind = 'CLEANING'
+                         and date_add(#{endTime}, interval rt.clean_after_minutes minute) &gt; o.block_start)
                   )
               )
             order by r.property_id, r.room_no

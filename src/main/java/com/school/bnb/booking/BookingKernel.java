@@ -135,7 +135,14 @@ public class BookingKernel {
         return require(bookingId);
     }
 
-    /** 加时：只往后推 end。入住前缓冲已经用掉了，所以只重算退房后的缓冲。 */
+    /**
+     * 加时：只往后推 end。入住前缓冲已经用掉了，所以只重算退房后的缓冲。
+     *
+     * <p><b>起点必须沿用占用行现在的 {@code block_start}，不能用计划开始时间。</b>
+     * 提前入住会把 block_start 往前扩（见 {@link #checkIn}），加时若拿计划起点重写整行，
+     * 那段"实际已经住人"的时段就被抹平了 —— 于是能被下一单卖掉。
+     * 这条是外部审阅指出、我核对后确认的真实缺陷。
+     */
     @Transactional
     public Booking extend(Long bookingId, LocalDateTime newEnd, int cleanAfterMinutes) {
         Booking booking = require(bookingId);
@@ -146,9 +153,10 @@ public class BookingKernel {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE,
                     "加时后的结束时间必须晚于当前结束时间 " + booking.getEndTime());
         }
+        Occupancy current = occupancyMapper.findRoomBlock(bookingId);
+        LocalDateTime blockStart = current == null ? booking.getStartTime() : current.getBlockStart();
         occupancyMapper.deleteByBookingId(bookingId);
 
-        LocalDateTime blockStart = booking.getStartTime();
         LocalDateTime blockEnd = newEnd.plusMinutes(cleanAfterMinutes);
         requireNoConflict(booking.getRoomId(), blockStart, blockEnd);
 
@@ -180,6 +188,12 @@ public class BookingKernel {
      * 计划 14:00 入住、客人 10:00 就到了，那 10:00–14:00 也必须算已占用，
      * 否则另一位前台能给这间房开一张 10:00–12:00 的钟点单。
      *
+     * <p><b>扩展出来的那一段同样要跑冲突检测。</b>原来只比"要不要前移"就直接改写
+     * {@code block_start}，于是两个原本互不冲突的预订能被一次入住操作叠到一起：
+     * A 单 10:00–12:00、B 单 14:00–18:00，给 B 办 10:00 提前入住，B 的占用就变成
+     * 10:00–18:00 与 A 重叠 —— 全项目赖以成立的"占用行互不重叠"不变量当场破掉，
+     * 而后续所有判定都是从这个不变量推出来的。这条是外部审阅指出、我核对后确认的真实缺陷。
+     *
      * <p>"在住期间持续挡房"不在这里改 block_end，而是写在冲突查询的第二个条件里 ——
      * 占用表要始终满足"行不重叠"这个不变量。
      */
@@ -193,8 +207,18 @@ public class BookingKernel {
         }
         Occupancy blk = occupancyMapper.findRoomBlock(bookingId);
         if (blk != null && at.isBefore(blk.getBlockStart())) {
-            blk.setBlockStart(at);
-            occupancyMapper.updateById(blk);
+            LocalDateTime blockEnd = blk.getBlockEnd();
+            // 先删自己再查 —— 排除自己最省事也最不会漏的写法（与改期同一套路）。
+            // 检测不过会抛异常，这次删除随事务回滚，旧占用原样保留
+            occupancyMapper.deleteByBookingId(bookingId);
+            if (!occupancyMapper.lockOverlapping(booking.getRoomId(), at, blockEnd).isEmpty()) {
+                throw new BizException(ErrorCode.ROOM_TIME_CONFLICT,
+                        "提前到 " + at + " 入住会撞上这间房当前的占用（含清扫缓冲）——"
+                                + "请先处理那一单，或按计划时间入住");
+            }
+            writeOccupancy(bookingId, booking.getRoomId(), booking.getStartTime(),
+                    booking.getEndTime(), at, blockEnd);
+            log.info("提前入住 booking={} 占用前扩至 {}", booking.getBookingNo(), at);
         }
         return require(bookingId);
     }

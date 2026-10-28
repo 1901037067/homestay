@@ -148,9 +148,17 @@
             />
           </el-form-item>
         </div>
+        <el-form-item label="改的是哪一笔钱" prop="appliesTo">
+          <el-radio-group v-model="form.appliesTo">
+            <el-radio value="ALL">房费与超时单价都改</el-radio>
+            <el-radio value="BASE">只改房费（起步价）</el-radio>
+            <el-radio value="OVERAGE">只改超时单价</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <div class="tip">
           倍率是"在平时价上乘"，1.20 = 上浮 20%、0.85 = 打 85 折；一口价直接把命中时段的单价改成这个数。
-          起步价按入住时刻的规则定，超时费按每一档的起点时刻定。
+          <b>房费是打包价、超时是元/小时，两种量纲不能共用一个数</b> ——
+          "假日一口价 488"若连小时价也变成 488，延迟退房一小时就会收 976，所以这类规则要选「只改房费」。
         </div>
       </el-form>
       <template #footer>
@@ -199,6 +207,7 @@ function empty() {
     endHour: null,
     mode: 'MULTIPLY',
     value: 1.2,
+    appliesTo: 'ALL',
     priority: 100,
     enabled: true
   }
@@ -214,22 +223,33 @@ async function load() {
   }
 }
 
+/** 只是把这家民宿的房型选项装进下拉框，不动已选值。 */
+async function loadTypes(propertyId) {
+  typeOptions.value = propertyId ? (await http.get(`/room-types?propertyId=${propertyId}`)).data : []
+}
+
+/** 用户主动换民宿时才必须清掉房型 —— 上一家的房型 id 拿到这一家没有意义。 */
 async function onProperty(id) {
   form.roomTypeId = null
-  typeOptions.value = id ? (await http.get(`/room-types?propertyId=${id}`)).data : []
+  await loadTypes(id)
 }
 
 function openCreate() {
   Object.assign(form, empty(), {
     propertyId: filterProperty.value ?? properties.value[0]?.id ?? null
   })
-  onProperty(form.propertyId)
+  loadTypes(form.propertyId)
   dialog.value = true
 }
 
+/**
+ * 编辑回填。这里刻意调 loadTypes 而不是 onProperty：
+ * 后者第一句就把 roomTypeId 清空，于是"打开编辑框"这个动作本身会悄悄改掉规则的作用域，
+ * 保存之后一条房型级规则变成民宿通用 —— 审阅第 4 条抓的就是这个。
+ */
 function openEdit(row) {
   Object.assign(form, empty(), { ...row, weekdays: row.weekdays || [] })
-  onProperty(row.propertyId)
+  loadTypes(row.propertyId)
   dialog.value = true
 }
 

@@ -75,8 +75,10 @@
             <span v-else class="bnb-muted">未结算</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" align="right">
+        <el-table-column label="操作" width="150" align="right">
           <template #default="{ row }">
+            <el-button v-if="row.status === 'CONFIRMED'" text @click="act(row, 'check-in')">入住</el-button>
+            <el-button v-if="row.status === 'IN_USE'" text @click="act(row, 'check-out')">退房</el-button>
             <el-button text @click="openBill(row)">账单</el-button>
           </template>
         </el-table-column>
@@ -103,6 +105,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import http from '../../api'
 import BillDialog from '../../components/BillDialog.vue'
@@ -171,6 +174,21 @@ function reload() {
 function openBill(row) {
   billDlg.value = true
   billRef.value.open(row.id)
+}
+
+/**
+ * 入住/退房也放在这里，不只是日历的附庸：
+ * 昨天该退房却没退的客人，他的占用块整段落在今天窗口之左，
+ * 日历上只剩左缘一小条；而"改天再来办"是前台真实会做的事。
+ */
+async function act(row, cmd) {
+  try {
+    await http.post(`/bookings/${row.id}/${cmd}`)
+    ElMessage.success(cmd === 'check-in' ? '已入住' : '已退房')
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  }
 }
 
 onMounted(load)

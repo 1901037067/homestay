@@ -29,6 +29,10 @@ import java.util.List;
  * <ul>
  *   <li><b>规则不叠加</b>：一个时刻只取一条规则，决胜顺序 priority 升 → 房型级压民宿级 → id 升。
  *       做成可叠加就得定义叠加顺序，而乘法与一口价混着叠根本没有正确答案。</li>
+ *   <li><b>规则声明自己改的是哪一笔钱</b>（{@link RateRuleDef.AppliesTo}）：房费是打包价、
+ *       超时是元/小时，同一个数值套两种量纲会算出荒谬金额 ——
+ *       "假日一口价 488"若连小时价也一起变成 488，延迟退房一小时就收 976。
+ *       起步段只接受 ALL/BASE，超时段只接受 ALL/OVERAGE。</li>
  *   <li><b>起步价按入住时刻定价</b>，超时费按各单元起点定价。所以跨了节假日边界的长住单，
  *       起步价用入住那天的价、后半段用假期的价 —— 这是有意为之，不是漏算。</li>
  *   <li><b>取整只在单元级发生</b>（HALF_UP 到分），明细金额是它包含的单元金额之和，
@@ -83,7 +87,7 @@ public final class PriceCalculator {
     public static Quote price(Input in) {
         validate(in);
 
-        RateRuleDef baseRule = selectBest(in.rules(), in.start());
+        RateRuleDef baseRule = selectBest(in.rules(), in.start(), RateRuleDef.AppliesTo.BASE);
         BigDecimal baseAmount = money(baseRule == null
                 ? in.basePrice()
                 : baseRule.applyTo(in.basePrice()));
@@ -125,7 +129,7 @@ public final class PriceCalculator {
             // 单元的 to 一律是"起点 + 整粒度"，越过 end 也不截短 ——
             // 最后一段不足一个单元仍按整单元收费，"不足一小时按一小时"就是在这一行发生的
             LocalDateTime next = cursor.plusMinutes(in.chargeUnitMinutes());
-            RateRuleDef hit = selectBest(in.rules(), cursor);
+            RateRuleDef hit = selectBest(in.rules(), cursor, RateRuleDef.AppliesTo.OVERAGE);
             BigDecimal unitPrice = money(hit == null ? in.extraHourPrice() : hit.applyTo(in.extraHourPrice()));
             BigDecimal amount = money(unitPrice.multiply(BigDecimal.valueOf(in.chargeUnitMinutes()))
                     .divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP));
@@ -177,12 +181,15 @@ public final class PriceCalculator {
     /**
      * 命中的规则里挑一条。<b>决胜必须全序</b> —— 否则同一张单两次算出不同金额，
      * 快照就成了"看运气"，而且单测也写不出来。
+     *
+     * @param lineKind 这一行是起步段还是超时段；声明了只管另一头的规则在这里被筛掉
      */
-    static RateRuleDef selectBest(List<RateRuleDef> rules, LocalDateTime at) {
+    static RateRuleDef selectBest(List<RateRuleDef> rules, LocalDateTime at, RateRuleDef.AppliesTo lineKind) {
         if (rules == null || rules.isEmpty()) {
             return null;
         }
         return rules.stream()
+                .filter(r -> r.appliesToLine(lineKind))
                 .filter(r -> r.matches(at))
                 .min(Comparator.comparingInt(RateRuleDef::priority)
                         // 房型级更具体，同优先级时赢过民宿级

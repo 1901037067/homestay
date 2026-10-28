@@ -55,6 +55,6 @@ public class RateRuleController {
     private static RateRuleReq withId(RateRuleReq req, Long id) {
         return new RateRuleReq(id, req.propertyId(), req.roomTypeId(), req.name(), req.validFrom(),
                 req.validTo(), req.weekdays(), req.startHour(), req.endHour(), req.mode(),
-                req.value(), req.priority(), req.enabled());
+                req.value(), req.appliesTo(), req.priority(), req.enabled());
     }
 }

@@ -2,6 +2,7 @@ package com.school.bnb;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.school.bnb.booking.BookingKernel;
 import com.school.bnb.dto.CreateBookingReq;
 import com.school.bnb.dto.PropertyReq;
 import com.school.bnb.dto.RoomReq;
@@ -33,6 +34,7 @@ class CalendarIT extends AbstractMysqlIT {
     private static final LocalDate DAY = LocalDate.of(2026, 12, 1);
 
     @Autowired CalendarService calendarService;
+    @Autowired BookingKernel kernel;
     @Autowired BookingService bookingService;
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
@@ -175,5 +177,44 @@ class CalendarIT extends AbstractMysqlIT {
         assertThat(blk.getGuestName()).isEqualTo("王小明");
         assertThat(blk.getBookingStatus()).isEqualTo(Booking.IN_USE);
         assertThat(blk.getBookingNo()).isEqualTo(b.bookingNo());
+    }
+
+    /**
+     * 审阅第 6 条：只按"与窗口相交"筛，会让两类行从今天消失 ——
+     * 昨天该退房却还没退的在住单、以及还没确认的清扫行。
+     * 前台看到的是"这间房空着"，开单时后端又提示仍被占用；更要命的是
+     * 退房、清扫完成这些按钮都挂在块上，块看不见就等于没有处理入口。
+     */
+    @Test
+    @DisplayName("超时在住与未确认清扫的行即使整段落在窗口之左，也必须出现在今天的日历上")
+    void overdueRowsStayVisibleSoTheyCanBeHandled() {
+        PropertyVO p = property(LocalTime.of(6, 0));
+        Room stale = room(p.id(), 30);
+        Room dirty = room(p.id(), 30);
+        LocalDateTime yStart = DAY.minusDays(1).atTime(8, 0);
+        LocalDateTime yEnd = DAY.minusDays(1).atTime(12, 0);
+
+        var a = bookingService.create(new CreateBookingReq(stale.getId(), "超时客人", null,
+                yStart, yEnd, Booking.CONFIRMED, null));
+        kernel.checkIn(a.id(), yStart);
+
+        var b = bookingService.create(new CreateBookingReq(dirty.getId(), "待扫客人", null,
+                yStart, yEnd, Booking.CONFIRMED, null));
+        kernel.checkIn(b.id(), yStart);
+        kernel.checkOut(b.id(), yEnd, 30);        // 留下 CLEANING [12:00, 12:30)，整段在 DAY 窗口之左
+
+        assertThat(row(calendarService.calendar(p.id(), DAY), stale.getId()).blocks())
+                .as("超时在住必须看得见")
+                .singleElement()
+                .satisfies(blk -> assertThat(blk.getBookingStatus()).isEqualTo(Booking.IN_USE));
+
+        assertThat(row(calendarService.calendar(p.id(), DAY), dirty.getId()).blocks())
+                .as("未确认的清扫行必须看得见，否则一键释放没有入口")
+                .singleElement()
+                .satisfies(blk -> assertThat(blk.getKind()).isEqualTo("CLEANING"));
+
+        // 确认之后就必须消失 —— 否则"永远显示"会变成另一种噪声
+        assertThat(bookingService.finishCleaning(dirty.getId())).isEqualTo(1);
+        assertThat(row(calendarService.calendar(p.id(), DAY), dirty.getId()).blocks()).isEmpty();
     }
 }

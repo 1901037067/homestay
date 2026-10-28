@@ -27,6 +27,8 @@ public record RateRuleReq(
         LocalTime endHour,
         @NotBlank(message = "必须选择计价方式") String mode,
         @NotNull @DecimalMin(value = "0.00", message = "不能为负") BigDecimal value,
+        /** ALL（默认）/ BASE（只改房费）/ OVERAGE（只改超时单价）。 */
+        String appliesTo,
         Integer priority,
         Boolean enabled) {
 }

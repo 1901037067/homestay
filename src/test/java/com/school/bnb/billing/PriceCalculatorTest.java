@@ -3,6 +3,7 @@ package com.school.bnb.billing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.school.bnb.billing.RateRuleDef.AppliesTo;
 import com.school.bnb.billing.RateRuleDef.Mode;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
@@ -289,7 +290,7 @@ class PriceCalculatorTest {
             List<RateRuleDef> rules = List.of(new RateRuleDef(1L, "国庆周末夜间", Set.of(DayOfWeek.SATURDAY),
                     LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 7),
                     LocalTime.of(22, 0), LocalTime.of(2, 0), Mode.MULTIPLY, new BigDecimal("1.50"),
-                    10, false));
+                    10, false, AppliesTo.ALL));
 
             assertThat(hit(rules, LocalDateTime.of(2026, 10, 3, 23, 0))).isNotNull();   // 周六 ∧ 区间内 ∧ 窗口内
             assertThat(hit(rules, LocalDateTime.of(2026, 10, 4, 23, 0))).isNull();      // 周日，星期不符
@@ -298,7 +299,72 @@ class PriceCalculatorTest {
         }
 
         private RateRuleDef hit(List<RateRuleDef> rules, LocalDateTime at) {
-            return PriceCalculator.selectBest(rules, at);
+            return PriceCalculator.selectBest(rules, at, AppliesTo.ALL);
+        }
+    }
+
+    // ---------------------------------------------------- 规则改的是哪一笔钱
+
+    /**
+     * 审阅第 5 条举的那个例子，原样搬进来当回归用例：
+     * 平时全日 388、超时 40/小时、假日"一口价 488"、客人延迟退房 1 小时。
+     *
+     * <p>房费是打包价、超时是元/小时，一条规则同时套两种量纲会收出 488 + 488 = 976，
+     * 而规则名字明明写的是"房费 488"。现在由 {@code appliesTo} 决定命中哪一头，
+     * 默认 ALL 保留旧行为（所以这里三种都测一遍，把差异钉在测试里而不是靠记忆）。
+     */
+    @Nested
+    class AppliesToTarget {
+
+        /** 10-03 14:00 入住、次日 13:00 退房 = 模板 22 小时 + 超时 1 小时。 */
+        private static final LocalDateTime START = LocalDateTime.of(2026, 10, 3, 14, 0);
+        private static final LocalDateTime END = LocalDateTime.of(2026, 10, 4, 13, 0);
+
+        private PriceCalculator.Quote priceWith(AppliesTo appliesTo) {
+            return PriceCalculator.price(new PriceCalculator.Input(START, END, 1320,
+                    new BigDecimal("388.00"), new BigDecimal("40.00"), 60,
+                    List.of(rule(1, "国庆全日房一口价", 10, true, Mode.OVERRIDE,
+                            "488.00", appliesTo))));
+        }
+
+        @Test
+        @DisplayName("只改房费时，超时仍按平时小时价收 —— 488 + 40")
+        void baseOnlyLeavesHourlyPriceAlone() {
+            PriceCalculator.Quote q = priceWith(AppliesTo.BASE);
+            assertThat(q.baseAmount()).isEqualByComparingTo("488.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("40.00");
+            assertThat(q.total()).isEqualByComparingTo("528.00");
+        }
+
+        @Test
+        @DisplayName("ALL 会把小时价也变成 488 —— 这正是 976 那个意外，留着当对照")
+        void allAppliesToBothLineKinds() {
+            PriceCalculator.Quote q = priceWith(AppliesTo.ALL);
+            assertThat(q.baseAmount()).isEqualByComparingTo("488.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("488.00");
+            assertThat(q.total()).isEqualByComparingTo("976.00");
+        }
+
+        @Test
+        @DisplayName("只改超时单价时房费不动 —— 388 + 488")
+        void overageOnlyLeavesBaseAlone() {
+            PriceCalculator.Quote q = priceWith(AppliesTo.OVERAGE);
+            assertThat(q.baseAmount()).isEqualByComparingTo("388.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("488.00");
+            assertThat(q.total()).isEqualByComparingTo("876.00");
+        }
+
+        @Test
+        @DisplayName("BASE 规则不参与超时段决胜，才能让位给一条 OVERAGE 规则")
+        void baseRuleDoesNotWinTheOverageSlot() {
+            PriceCalculator.Quote q = PriceCalculator.price(new PriceCalculator.Input(
+                    START, END, 1320, new BigDecimal("388.00"), new BigDecimal("40.00"), 60,
+                    List.of(rule(1, "假日房费", 5, true, Mode.OVERRIDE, "488.00", AppliesTo.BASE),
+                            rule(2, "假日超时单价", 50, true, Mode.OVERRIDE, "60.00", AppliesTo.OVERAGE))));
+
+            assertThat(q.baseAmount()).isEqualByComparingTo("488.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("60.00");
+            assertThat(q.total()).isEqualByComparingTo("548.00");
         }
     }
 
@@ -330,27 +396,33 @@ class PriceCalculatorTest {
 
     private static RateRuleDef always(long id, String name, int priority, boolean scoped,
                                       Mode mode, String value) {
+        return rule(id, name, priority, scoped, mode, value, AppliesTo.ALL);
+    }
+
+    /** 显式指定"改的是哪一笔钱"，用来测 applies_to 的分流。 */
+    private static RateRuleDef rule(long id, String name, int priority, boolean scoped,
+                                    Mode mode, String value, AppliesTo appliesTo) {
         return new RateRuleDef(id, name, EnumSet.noneOf(DayOfWeek.class), null, null, null, null,
-                mode, new BigDecimal(value), priority, scoped);
+                mode, new BigDecimal(value), priority, scoped, appliesTo);
     }
 
     private static RateRuleDef onDays(long id, String name, int priority, boolean scoped,
                                       Mode mode, String value, DayOfWeek... days) {
         return new RateRuleDef(id, name, EnumSet.copyOf(Set.of(days)), null, null, null, null,
-                mode, new BigDecimal(value), priority, scoped);
+                mode, new BigDecimal(value), priority, scoped, AppliesTo.ALL);
     }
 
     private static RateRuleDef onDates(long id, String name, int priority, boolean scoped,
                                       Mode mode, String value, String from, String to) {
         return new RateRuleDef(id, name, EnumSet.noneOf(DayOfWeek.class),
                 LocalDate.parse(from), LocalDate.parse(to), null, null,
-                mode, new BigDecimal(value), priority, scoped);
+                mode, new BigDecimal(value), priority, scoped, AppliesTo.ALL);
     }
 
     private static RateRuleDef inHours(long id, String name, int priority, boolean scoped,
                                       Mode mode, String value, String from, String to) {
         return new RateRuleDef(id, name, EnumSet.noneOf(DayOfWeek.class), null, null,
                 LocalTime.parse(from), LocalTime.parse(to),
-                mode, new BigDecimal(value), priority, scoped);
+                mode, new BigDecimal(value), priority, scoped, AppliesTo.ALL);
     }
 }

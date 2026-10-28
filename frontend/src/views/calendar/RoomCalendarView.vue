@@ -309,13 +309,15 @@ function cellSellable(room, offset) {
 }
 
 /**
- * 与后端 lockOverlapping 同口径的两个条件：
- * ① 区间相交；② 超时未退房 —— 已过计划离店块且请求触到那之后，才把未知时段也算占用。
- * 未到期不拦，否则"客人 14:00 入住、先预卖今晚 20:00 之后"这种正常操作会被一起挡掉。
+ * 与后端 lockOverlapping 同口径的三个条件：
+ * ① 区间相交；② 超时未退房 —— 已过计划离店块且请求触到那之后，才把未知时段也算占用；
+ * ③ 待清扫 —— 没点"清扫完成"之前，从清扫起点往后一直挡着，包括今天晚些和以后的日子。
+ * ②未到期不拦，否则"客人 14:00 入住、先预卖今晚 20:00 之后"这种正常操作会被一起挡掉。
  */
 function conflicts(b, from, to) {
   const start = parse(b.blockStart)
   const end = parse(b.blockEnd)
+  if (b.kind === 'CLEANING' && to > start) return true
   if (b.bookingStatus === 'IN_USE' && new Date() >= end && to > end) return true
   return start < to && end > from
 }
@@ -341,7 +343,11 @@ function blkStyle(b) {
   const ws = parse(cal.value.windowStart)
   const s = Math.max(0, diffMinutes(ws, parse(b.blockStart)))
   const e = Math.min(1440, diffMinutes(ws, parse(b.blockEnd)))
-  return { left: `${(s / 1440) * 100}%`, width: `${((e - s) / 1440) * 100}%` }
+  // 后端会把"整段落在窗口之左"的异常行（超时在住、未确认清扫）也一并返回，
+  // 否则那些行从今天消失 = 处理入口消失。这里夹到左缘画出一小段。
+  // 30 分钟不是随手取的：再窄就点不中，而点开这块正是前台要办的事（去办退房/清扫）。
+  const w = Math.max(e - s, 30)
+  return { left: `${(s / 1440) * 100}%`, width: `${(w / 1440) * 100}%` }
 }
 
 function rangeText(b) {

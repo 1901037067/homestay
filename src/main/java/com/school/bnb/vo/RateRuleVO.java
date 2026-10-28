@@ -21,6 +21,7 @@ public record RateRuleVO(
         LocalTime endHour,
         String mode,
         BigDecimal value,
+        String appliesTo,
         Integer priority,
         Boolean enabled,
         /** 一句人话概括命中条件，表格列直接显示它，省得前端再拼一遍规则。 */
@@ -29,7 +30,8 @@ public record RateRuleVO(
     public static RateRuleVO of(RateRule r, String propertyName, String roomTypeName, List<Integer> weekdays) {
         return new RateRuleVO(r.getId(), r.getPropertyId(), propertyName, r.getRoomTypeId(), roomTypeName,
                 r.getName(), r.getValidFrom(), r.getValidTo(), weekdays, r.getStartHour(), r.getEndHour(),
-                r.getMode(), r.getValue(), r.getPriority(), r.getEnabled(), describe(r, weekdays));
+                r.getMode(), r.getValue(), r.getAppliesTo(), r.getPriority(), r.getEnabled(),
+                describe(r, weekdays));
     }
 
     private static final String[] CN_WEEKDAY = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
@@ -56,6 +58,17 @@ public record RateRuleVO(
         if (sb.isEmpty()) {
             sb.append("全天");
         }
-        return sb.append("｜").append(r.getRoomTypeId() == null ? "民宿通用" : "仅指定房型").toString();
+        sb.append("｜").append(r.getRoomTypeId() == null ? "民宿通用" : "仅指定房型");
+        // 作用对象必须显式露出来：一条"一口价 488"到底改的是房费还是小时价，
+        // 前台只有在这一列看得见，否则延迟退房收出两倍金额时没人知道为什么
+        sb.append("｜").append(appliesLabel(r.getAppliesTo()));
+        return sb.toString();
+    }
+
+    private static String appliesLabel(String appliesTo) {
+        if (appliesTo == null || "ALL".equals(appliesTo)) {
+            return "房费+超时";
+        }
+        return "BASE".equals(appliesTo) ? "只改房费" : "只改超时单价";
     }
 }

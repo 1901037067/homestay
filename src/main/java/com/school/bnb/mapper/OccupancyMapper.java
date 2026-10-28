@@ -28,6 +28,16 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
      * <p>条件刻意收窄成"<b>现在</b>已过 block_end 且请求触到 block_end 之后"，不是"只要在住就全挡"：
      * 后者会把"客人 14:00 入住、先把今晚 20:00 之后预卖出去"这种正常操作一起拒掉。
      * 计划离店时刻是客人对房间的承诺，未到期就按承诺算；到期还没退房才是未知状态，需要拦。
+     *
+     * <p><b>第三个条件"待清扫持续占用"</b>：需求方确认的流程是"保洁收拾好点一下，前台才知道这间房能卖"，
+     * 所以 {@code CLEANING} 行代表的是<b>一件还没做完的事</b>，不是一个固定的时段 ——
+     * 它必须一直挡到有人点"清扫完成"为止，而不是"预计 45 分钟过去就自动放行"。
+     * 若只靠第一段的有限区间比较，就会出现"12:00 退房、缓冲 45 分钟、13:00 的新单照样通过"，
+     * 而实际房间可能还没打扫，"可售"这个信号又变得不可信 —— 正是 W5 要消灭的那个信任缺口。
+     *
+     * <p>代价要写清楚：保洁忘了点，这间房<b>连未来的时段都卖不出去</b>。这是确认式闸门的固有代价，
+     * 不是 bug —— 缓解办法是让那一行始终看得见、一键就能释放（见 {@link #findCalendarBlocks} 的
+     * 第三条 or 分支），而不是把闸门改回"到点自动放行"。
      */
     @Select("""
             select o.id from occupancy o
@@ -36,6 +46,7 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
               and (
                     (o.block_start < #{endTime} and o.block_end > #{startTime})
                  or (b.status = 'IN_USE' and now() >= o.block_end and #{endTime} > o.block_end)
+                 or (o.kind = 'CLEANING' and #{endTime} > o.block_start)
               )
             for update
             """)
@@ -87,6 +98,13 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
      *
      * <p>判定用 block 而不是业务时间 —— 日历要画的就是"这段时间被挡住了"，
      * 缓冲期虽然没人住，但确实不可售，不画出来前台就会在缓冲时段上重复开单。
+     *
+     * <p><b>后两个 or 分支是给"异常任务"开的洞。</b>只按窗口相交筛，会让两类行从今天消失：
+     * 昨天本该退房却还没退的在住单（block 整段落在今天窗口之左）、以及还没确认的清扫行。
+     * 于是前台看到的是"这间房空着"，而开单时后端又提示仍被占用 —— 界面与判定互相打脸。
+     * 更要紧的是<b>处理入口就没了</b>：退房按钮、清扫完成按钮都挂在块上，块看不见就等于办不了。
+     * 所以这两类行无论落不落在窗口里都必须返回，前端把它们夹到窗口左缘画出一小段
+     * （见 {@code RoomCalendarView.blkStyle} 的 Math.max/min）。
      */
     @Select("""
             <script>
@@ -94,9 +112,13 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
                    o.start_time, o.end_time, o.block_start, o.block_end, o.kind
             from occupancy o
             join booking b on b.id = o.booking_id
-            where o.block_start &lt; #{to}
-              and o.block_end &gt; #{from}
+            where ((o.block_start &lt; #{to}
+                    and o.block_end &gt; #{from})
+                or (b.status = 'IN_USE' and o.block_end &lt;= #{from})
+                or (o.kind = 'CLEANING'))
             <if test="propertyId != null">
+              <!-- 三个 or 分支必须整体加括号再 and 房间过滤：and 的优先级高于 or，
+                   少了那对括号，民宿隔离只会作用在最后一个分支上，别的店的房间会漏进来 -->
               and o.room_id in (select id from room where property_id = #{propertyId})
             </if>
             order by o.block_start

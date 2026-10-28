@@ -35,7 +35,8 @@ public record RateRuleDef(Long id,
                           Mode mode,
                           BigDecimal value,
                           int priority,
-                          boolean roomTypeScoped) {
+                          boolean roomTypeScoped,
+                          AppliesTo appliesTo) {
 
     /**
      * 计价方式。只有这两种，故意不做"满减""固定服务费"之类 ——
@@ -46,6 +47,27 @@ public record RateRuleDef(Long id,
         OVERRIDE,
         /** 命中的那段，在平时价上乘 value（1.20 = 上浮 20%，0.85 = 打 85 折）。 */
         MULTIPLY
+    }
+
+    /**
+     * 这条规则改的是<b>哪一笔钱</b>。
+     *
+     * <p>必须是显式的一列，不能让同一个数值同时套到两种量纲上：房费是打包价（一单一次），
+     * 超时是元/小时。"假日一口价 488"若同时把小时价也变成 488，延迟退房一小时就收出 976，
+     * 而前台读到的名字明明写着房费。
+     */
+    public enum AppliesTo {
+        /** 房费与超时单价都改 —— "周末整体贵 20%"这种语义。 */
+        ALL,
+        /** 只改起步价/房费 —— 节假日一口价。 */
+        BASE,
+        /** 只改超时单价 —— 夜间超时加收。 */
+        OVERAGE
+    }
+
+    /** 这条规则能不能作用在这一行（起步段 / 超时段）上。 */
+    public boolean appliesToLine(AppliesTo lineKind) {
+        return appliesTo == AppliesTo.ALL || appliesTo == lineKind;
     }
 
     /**

@@ -21,7 +21,9 @@ import com.school.bnb.service.RateRuleService;
 import com.school.bnb.service.RoomService;
 import com.school.bnb.service.RoomTypeService;
 import com.school.bnb.vo.PropertyVO;
+import com.school.bnb.vo.RateRuleVO;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
@@ -138,7 +140,7 @@ class BillingIT extends AbstractMysqlIT {
 
         // 整家民宿上浮 1.5 倍：起步 150 + 超时 30 = 180
         rateRuleService.save(new RateRuleReq(null, room.getPropertyId(), null, "全场上浮",
-                null, null, List.of(), null, null, "MULTIPLY", new BigDecimal("1.50"), 100, true));
+                null, null, List.of(), null, null, "MULTIPLY", new BigDecimal("1.50"), "ALL", 100, true));
 
         JsonNode preview = json(post("/api/bookings/" + id + "/bill/preview").session(session));
         assertThat(preview.path("data").path("totalAmount").decimalValue()).isEqualByComparingTo("180.00");
@@ -165,7 +167,7 @@ class BillingIT extends AbstractMysqlIT {
         long id = booking(session, room, 9, 12);
 
         rateRuleService.save(new RateRuleReq(null, room.getPropertyId(), null, "未启用的加价",
-                null, null, List.of(), null, null, "MULTIPLY", new BigDecimal("2.00"), 100, false));
+                null, null, List.of(), null, null, "MULTIPLY", new BigDecimal("2.00"), "ALL", 100, false));
 
         JsonNode preview = json(post("/api/bookings/" + id + "/bill/preview").session(session)).path("data");
         assertThat(preview.path("totalAmount").decimalValue()).isEqualByComparingTo("120.00");
@@ -301,6 +303,32 @@ class BillingIT extends AbstractMysqlIT {
         assertThat(extended.path("lines").get(1).path("chargeMinutes").asInt()).isEqualTo(120);
     }
 
+    @Test
+    @DisplayName("清空规则上的限制必须真的落库 —— 默认更新策略会跳过 null 字段")
+    void clearingRuleConstraintsTakesEffect() throws Exception {
+        MockHttpSession session = login();
+        Room room = room("100.00", 2, "20.00", 60);
+        long id = booking(session, room, 9, 12);      // 周一 9:00–12:00 → 平时 100 + 20
+
+        // 一条被"日期 + 星期 + 房型"三重限制框住的规则，此刻一块都不该命中
+        rateRuleService.save(new RateRuleReq(null, room.getPropertyId(), room.getRoomTypeId(),
+                "元旦周末特价", LocalDate.of(2027, 1, 1), LocalDate.of(2027, 1, 2), List.of(6, 7),
+                null, null, "OVERRIDE", new BigDecimal("50.00"), "ALL", 100, true));
+        assertThat(total(session, id)).isEqualByComparingTo("120.00");
+
+        // 把三块限制全部清空 = 改成一条民宿通用、不限日期星期的规则
+        Long ruleId = rateRuleService.list(room.getPropertyId()).get(0).id();
+        rateRuleService.save(new RateRuleReq(ruleId, room.getPropertyId(), null, "民宿通用特价",
+                null, null, List.of(), null, null, "OVERRIDE", new BigDecimal("50.00"), "ALL", 100, true));
+
+        RateRuleVO after = rateRuleService.list(room.getPropertyId()).get(0);
+        assertThat(after.roomTypeId()).as("房型作用域要真的清掉").isNull();
+        assertThat(after.validFrom()).as("日期限制要真的清掉").isNull();
+        assertThat(after.weekdays()).as("星期限制要真的清掉").isEmpty();
+        // 页面提示"已保存"而库里没变，是这个 bug 最难发现的地方 —— 所以要用钱来验，不是用提示来验
+        assertThat(total(session, id)).isEqualByComparingTo("100.00");
+    }
+
     // ------------------------------------------------------------------ 夹具
 
     private MockHttpSession login() throws Exception {
@@ -378,5 +406,11 @@ class BillingIT extends AbstractMysqlIT {
         String body = mockMvc.perform(rb).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         return MAPPER.readTree(body);
+    }
+
+    /** 试算合计。规则改没改成功，最终要用钱来验，而不是用"保存成功"的提示来验。 */
+    private BigDecimal total(MockHttpSession session, long bookingId) throws Exception {
+        return json(post("/api/bookings/" + bookingId + "/bill/preview").session(session))
+                .path("data").path("totalAmount").decimalValue();
     }
 }

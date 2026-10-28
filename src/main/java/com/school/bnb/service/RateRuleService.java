@@ -85,6 +85,7 @@ public class RateRuleService {
         r.setEndHour(req.endHour());
         r.setMode(mode.name());
         r.setValue(req.value());
+        r.setAppliesTo(parseApplies(req.appliesTo()).name());
         r.setPriority(req.priority() == null ? 100 : req.priority());
         r.setEnabled(req.enabled() == null || req.enabled());
         if (req.id() == null) {
@@ -137,7 +138,21 @@ public class RateRuleService {
         return new RateRuleDef(r.getId(), r.getName(), toDaySet(parseWeekdays(r.getWeekdays())),
                 r.getValidFrom(), r.getValidTo(), r.getStartHour(), r.getEndHour(),
                 parseMode(r.getMode()), r.getValue(),
-                r.getPriority() == null ? 100 : r.getPriority(), roomTypeScoped);
+                r.getPriority() == null ? 100 : r.getPriority(), roomTypeScoped,
+                parseApplies(r.getAppliesTo()));
+    }
+
+    /** 老数据可能没有这一列的值（V6 之前建的行），一律按"两笔都改"解释，与升级前行为一致。 */
+    static RateRuleDef.AppliesTo parseApplies(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return RateRuleDef.AppliesTo.ALL;
+        }
+        try {
+            return RateRuleDef.AppliesTo.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BizException(ErrorCode.RULE_INVALID,
+                    "作用对象只能是 ALL / BASE / OVERAGE，收到 " + raw);
+        }
     }
 
     // ---------------------------------------------------------------- 校验与转换

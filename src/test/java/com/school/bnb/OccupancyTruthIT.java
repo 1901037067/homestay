@@ -209,4 +209,109 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         assertThat(kernel.require(first.id()).getStartTime()).isEqualTo(TODAY.withHour(9));
         assertThat(occupancyRows(r.getId())).isEqualTo(1);
     }
+
+    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）
+
+    @Test
+    @DisplayName("⑥ 提前入住也要跑冲突检测：不能把占用前扩进别人已订的时段")
+    void earlyCheckInCannotOverlapExistingGuest() {
+        Room r = room(2, 0, 0);
+        // A 10:00–12:00、B 14:00–18:00，两单本来互不相干
+        book(r.getId(), TODAY.withHour(10), TODAY.withHour(12), "HOURLY", null);
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+        assertThat(occupancyRows(r.getId())).isEqualTo(2);
+
+        // 给 B 办 10:00 提前入住 = 把 B 的占用前扩到 A 头上。修复前这里直接改写 block_start，
+        // 两个原本不冲突的预订就被一次入住操作叠到了一起
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(10)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        assertThat(blockStartOf(b.id())).as("被拒之后占用起点必须没被改写").isEqualTo(TODAY.withHour(14));
+        assertThat(kernel.require(b.id()).getStatus()).as("入住状态随事务一起回滚").isEqualTo(Booking.CONFIRMED);
+        assertThat(overlappingRows(r.getId())).isZero();
+    }
+
+    @Test
+    @DisplayName("⑥ 合法的提前入住仍然要真的把前段占住（不能把检测做成一律拒绝）")
+    void legitimateEarlyCheckInStillExtends() {
+        Room r = room(2, 0, 0);
+        // A 占到 10:00 整 —— 半开区间，B 从 10:00 起入住不算撞上 A
+        book(r.getId(), TODAY.withHour(8), TODAY.withHour(10), "HOURLY", null);
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+
+        kernel.checkIn(b.id(), TODAY.withHour(10));   // 10:00 起没人订，扩到这里合法
+
+        assertThat(blockStartOf(b.id())).isEqualTo(TODAY.withHour(10));
+        assertThat(overlappingRows(r.getId())).as("边界相接不是重叠").isZero();
+    }
+
+    @Test
+    @DisplayName("⑦ 提前入住之后再加时，扩出来的起点不能被抹回计划时间")
+    void extendKeepsTheExtendedStart() {
+        Room r = room(2, 0, 0);
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+        kernel.checkIn(b.id(), TODAY.withHour(10));
+        assertThat(blockStartOf(b.id())).isEqualTo(TODAY.withHour(10));
+
+        bookingService.extend(b.id(), new ExtendReq(TODAY.withHour(20)));
+
+        // 修复前 extend 用 booking.startTime 当起点，于是 10:00–14:00 那段"实际已住人"被抹平，
+        // 又能被别人开走
+        assertThat(blockStartOf(b.id())).as("加时重写整行时起点要沿用当前 block_start")
+                .isEqualTo(TODAY.withHour(10));
+        assertThat(overlappingRows(r.getId())).isZero();
+    }
+
+    // -------------------------- ⑧ 待清扫是确认式闸门，不是固定时段（第三轮审阅第 2 条）
+
+    @Test
+    @DisplayName("⑧ 没点「清扫完成」就一直挡房，预计时长过去也不例外；可售查询同口径")
+    void unconfirmedCleaningKeepsBlockingPastItsEstimate() {
+        Room r = room(2, 0, 30);
+        BookingVO b = book(r.getId(), TODAY.withHour(9), TODAY.withHour(12), "HOURLY", null);
+        kernel.checkIn(b.id(), TODAY.withHour(9));
+        kernel.checkOut(b.id(), TODAY.withHour(12), 30);      // CLEANING 行 [12:00, 12:30]
+
+        // 14:00 早已越过预计终点，但没人点确认 —— 需求方要的语义是"保洁点了才算能卖"
+        assertThatThrownBy(() -> book(r.getId(), TODAY.withHour(14), TODAY.withHour(16), "HOURLY", null))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("修复前这里是「预计 45 分钟一过就自动放行」，与文档里的确认式闸门不一致")
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        assertThat(bookingService.availableRooms(null, TODAY.withHour(14), TODAY.withHour(16), null,
+                com.school.bnb.booking.SaleType.HOURLY))
+                .as("可售查询必须和内核同口径，否则前端点了才被拒")
+                .extracting("id").doesNotContain(r.getId());
+
+        assertThat(bookingService.finishCleaning(r.getId())).isEqualTo(1);
+        assertThat(book(r.getId(), TODAY.withHour(14), TODAY.withHour(16), "HOURLY", null)).isNotNull();
+    }
+
+    // ---------------------------------------------------------------- 夹具
+
+    private LocalDateTime blockStartOf(Long bookingId) {
+        return jdbc.queryForObject(
+                "select block_start from occupancy where booking_id = ? and kind = 'ROOM'",
+                LocalDateTime.class, bookingId);
+    }
+
+    /**
+     * 同一间房里两两重叠的占用行数 —— <b>任何时刻都必须是 0</b>。
+     *
+     * <p>整项目的（冲突检测、释放、报表口径）都是从这条不变量推出来的，
+     * 所以每个会改写占用的动作都要顺手验它一次，而不是只验"这次操作本身对不对"。
+     */
+    private int overlappingRows(Long roomId) {
+        Integer n = jdbc.queryForObject("""
+                select count(1) from occupancy a
+                join occupancy b on a.room_id = b.room_id and a.id < b.id
+                where a.room_id = ?
+                  and a.block_start < b.block_end
+                  and a.block_end > b.block_start
+                """, Integer.class, roomId);
+        return n == null ? 0 : n;
+    }
 }
