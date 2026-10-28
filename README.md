@@ -85,13 +85,24 @@ docker compose --profile app up -d --build   # MySQL + 后端 + 前端（nginx �
 # 打开 http://localhost:5173
 ```
 
-开发期仍只需要 `docker compose up -d`（只起库）。两者共用同一份 mysql 配置 —— 用 profile 而不是
-两个 compose 文件，是为了让字符集/时区这类"改一边忘一边就出事"的配置只有一处。
-后端镜像里放了 `docker/maven-settings.xml` 走阿里云镜像；能直连 Maven Central 的机器删掉
-Dockerfile 里那行 COPY 即可。
+**已实测通过**（2026-10-29）：后端容器 `healthy`、nginx 静态页 200、`/api/ping` 反代通、
+容器内 Flyway 校验 6 个迁移后 5.6 秒启动、登录后经 nginx 取到报表数据。
+后端镜像 332MB（多阶段构建，运行镜像里没有 Maven 与源码）。
 
-前端不直连 8080，走 Vite dev proxy（`frontend/vite.config.js`），这样 `JSESSIONID`
-是同源 cookie，后端不必开 CORS 白名单。
+两个网络坑都已在镜像里规避，换机器时留意：
+
+- 构建容器**拿不到外网直连**时会卡在下载上（本机实测 `npm ci` 288 秒后 ETIMEDOUT）。
+  所以后端用 `docker/maven-settings.xml`（阿里云）、前端用 `ARG NPM_REGISTRY`
+  （默认 npmmirror）。能直连的机器用
+  `--build-arg NPM_REGISTRY=https://registry.npmjs.org` 覆盖，或删掉 Dockerfile 里那两行。
+- 开发期仍只需要 `docker compose up -d`（只起库）。两者共用同一份 mysql 配置 ——
+  用 profile 而不是两个 compose 文件，是为了让字符集/时区这类"改一边忘一边就出事"的配置只有一处。
+
+前端不直连 8080，开发时走 Vite dev proxy、部署时走 nginx 反代，两条路都是同源 cookie，
+后端不必开 CORS 白名单。
+
+> 开发（热更新）与部署（容器）**不要同时跑**：两者都占 8080/5173。
+> 切回开发时先 `docker compose --profile app stop backend frontend`（mysql 留着）。
 
 ## 界面与主题
 
