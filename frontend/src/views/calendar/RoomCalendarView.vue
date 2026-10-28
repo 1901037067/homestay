@@ -235,6 +235,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Refresh } from '@element-plus/icons-vue'
 import http from '../../api'
 import BillDialog from '../../components/BillDialog.vue'
+import { cellIsSellable } from '../../utils/sellable'
 import { addMinutes, clock, diffMinutes, fmt, humanMinutes, parse } from '../../utils/dtime'
 
 const properties = ref([])
@@ -298,28 +299,7 @@ function cellStart(offset) {
  * 已有块到 12:45、新单 13:00 入住、入住前缓冲 30 分钟 → 新 block 从 12:30 起，实际冲突。
  */
 function cellSellable(room, offset) {
-  if (room.status !== 'ON_SALE') return false
-  const from = cellStart(offset)
-  const t = `${pad(from.getHours())}:${pad(from.getMinutes())}`
-  if (t < cal.value.openTime.slice(0, 5) || t > cal.value.closeTime.slice(0, 5)) return false
-
-  const effStart = addMinutes(from, -(room.cleanBeforeMinutes || 0))
-  const effEnd = addMinutes(from, (room.minHours || 1) * 60 + (room.cleanAfterMinutes || 0))
-  return !room.blocks.some((b) => conflicts(b, effStart, effEnd))
-}
-
-/**
- * 与后端 lockOverlapping 同口径的三个条件：
- * ① 区间相交；② 超时未退房 —— 已过计划离店块且请求触到那之后，才把未知时段也算占用；
- * ③ 待清扫 —— 没点"清扫完成"之前，从清扫起点往后一直挡着，包括今天晚些和以后的日子。
- * ②未到期不拦，否则"客人 14:00 入住、先预卖今晚 20:00 之后"这种正常操作会被一起挡掉。
- */
-function conflicts(b, from, to) {
-  const start = parse(b.blockStart)
-  const end = parse(b.blockEnd)
-  if (b.kind === 'CLEANING' && to > start) return true
-  if (b.bookingStatus === 'IN_USE' && new Date() >= end && to > end) return true
-  return start < to && end > from
+  return cellIsSellable(room, cellStart(offset), cal.value.openTime, cal.value.closeTime)
 }
 
 function blkClass(b) {

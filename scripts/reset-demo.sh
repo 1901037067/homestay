@@ -35,3 +35,8 @@ docker compose exec -T mysql mysql --default-character-set=utf8mb4 \
 
 echo
 echo "完成。演示账号 admin / Staff 均为 Admin@123"
+echo
+echo "还差一步：历史订单在这里是「已退房未结算」状态，金额留给计费引擎去算。"
+echo "  1) 另开终端起后端：  mvn spring-boot:run"
+echo "  2) 再跑：            bash scripts/settle-demo.sh"
+echo "跑完之后历史账单才有真快照，报表营收才是引擎算出来的数。"

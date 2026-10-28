@@ -1,6 +1,7 @@
 package com.school.bnb.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.school.bnb.common.Paging;
 import com.school.bnb.common.R;
 import com.school.bnb.booking.SaleType;
 import com.school.bnb.dto.ChangeTimesReq;
@@ -52,7 +53,7 @@ public class BookingController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to) {
-        return R.ok(service.list(page, size, status, roomId, keyword, from, to));
+        return R.ok(service.list(Paging.page(page), Paging.size(size), status, roomId, keyword, from, to));
     }
 
     @Operation(summary = "订单详情")

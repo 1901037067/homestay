@@ -62,6 +62,15 @@ public class PropertyService {
         p.setName(req.name().trim());
         p.setAddress(req.address());
         p.setDayCutTime(orDefault(req.dayCutTime(), LocalTime.of(6, 0)));
+        // 切割点必须是整点。报表与日历把"一小时"当横轴一格，营业日归属却按时刻精确推算；
+        // 06:30 这种切割点会让"归哪一天"用分钟、"画在第几格"只能按整点算，两处对不上 ——
+        // 实测 06:15 的单会被归到前一天、却画在属于新一天的格子里（审阅抓出的口径问题）。
+        // 对民宿业务来说 06:00 与 06:30 没有实际差别，限制成整点比让每个公式都带着分钟更安全
+        if (p.getDayCutTime().getMinute() != 0 || p.getDayCutTime().getSecond() != 0) {
+            throw new BizException(ErrorCode.BAD_REQUEST,
+                    "营业日切割点必须是整点（如 06:00），收到 " + p.getDayCutTime()
+                            + "；分钟级切割会让报表分桶与日历格子对不齐");
+        }
         p.setOpenTime(orDefault(req.openTime(), LocalTime.of(8, 0)));
         p.setCloseTime(orDefault(req.closeTime(), LocalTime.of(22, 0)));
         if (req.id() == null) {

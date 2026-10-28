@@ -9,6 +9,7 @@ import com.school.bnb.entity.RoomType;
 import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.mapper.RoomTypeMapper;
 import com.school.bnb.vo.RoomTypeVO;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
@@ -20,11 +21,14 @@ public class RoomTypeService {
     private final RoomTypeMapper roomTypeMapper;
     private final RoomMapper roomMapper;
     private final PropertyService propertyService;
+    private final OperationLogService opLog;
 
-    public RoomTypeService(RoomTypeMapper roomTypeMapper, RoomMapper roomMapper, PropertyService propertyService) {
+    public RoomTypeService(RoomTypeMapper roomTypeMapper, RoomMapper roomMapper,
+                           PropertyService propertyService, OperationLogService opLog) {
         this.roomTypeMapper = roomTypeMapper;
         this.roomMapper = roomMapper;
         this.propertyService = propertyService;
+        this.opLog = opLog;
     }
 
     public List<RoomTypeVO> list(Long propertyId) {
@@ -83,7 +87,34 @@ public class RoomTypeService {
             require(req.id());
             roomTypeMapper.updateById(t);
         }
+        // 改价必须留痕：这一列直接决定账单金额，而账单是钱的凭证。
+        // 之前只记了订单与房间状态，"谁把 212 改成了 188"这种追问是答不出来的
+        opLog.record(existing == null ? "ROOM_TYPE_CREATE" : "ROOM_TYPE_UPDATE", "room_type", t.getId(),
+                priceSummary(existing, t), existing, t);
         return t;
+    }
+
+    /** 日志摘要只说变了的钱，不把整行字段列一遍 —— 列表页里要一眼看得出改了什么。 */
+    private static String priceSummary(RoomType before, RoomType after) {
+        if (before == null) {
+            return String.format("%s｜基础价 %s、起步 %dh、超时 %s/h、粒度 %d′",
+                    after.getName(), after.getBasePrice(), after.getMinHours(),
+                    after.getExtraHourPrice(), after.getChargeUnitMinutes());
+        }
+        List<String> changes = new ArrayList<>();
+        if (before.getBasePrice().compareTo(after.getBasePrice()) != 0) {
+            changes.add("基础价 " + before.getBasePrice() + "→" + after.getBasePrice());
+        }
+        if (before.getExtraHourPrice().compareTo(after.getExtraHourPrice()) != 0) {
+            changes.add("超时 " + before.getExtraHourPrice() + "→" + after.getExtraHourPrice());
+        }
+        if (!before.getMinHours().equals(after.getMinHours())) {
+            changes.add("起步 " + before.getMinHours() + "h→" + after.getMinHours() + "h");
+        }
+        if (!before.getChargeUnitMinutes().equals(after.getChargeUnitMinutes())) {
+            changes.add("粒度 " + before.getChargeUnitMinutes() + "′→" + after.getChargeUnitMinutes() + "′");
+        }
+        return after.getName() + "｜" + (changes.isEmpty() ? "价格未变" : String.join("；", changes));
     }
 
     @Transactional

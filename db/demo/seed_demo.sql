@@ -11,11 +11,12 @@
 -- 时间全部用 CURDATE() 相对生成，任何时候灌都"像刚发生的事"。
 -- 时段分布刻意做成晚间高峰，W7 的分时段热力图一开就有形状。
 --
--- ⚠ 已知不一致（W8 整理演示数据时收掉）：下面这些 amount 是手写的，
---   写在计费引擎（W6）之前，和 /bill/preview 算出来的数并不都相等。
---   结算路径不会受影响 —— 真正点"结算"的单，金额由 PriceCalculator 说了算并写回 booking.amount；
---   但已结算的历史行没有 bill 快照行，日历/列表上去看会显示"实时试算"而不是"账单快照"。
---   要做成一致的历史数据，就把这批行的 status 改成 CHECKED_OUT 再逐笔调 /settle 生成真快照。
+-- ⚠ 历史订单在这里一律是 CHECKED_OUT、amount=0.00，**不是** SETTLED。
+--   原因：金额与账单快照必须由计费引擎产出，SQL 里手写一个数就会和 /bill/preview 对不上，
+--   演示时点开历史账单会显示"实时试算"而不是"账单快照"。
+--   所以灌完数据、后端起来之后，还要跑一次： bash scripts/settle-demo.sh
+--   它逐笔调 /api/bookings/{id}/settle，于是这批历史单走的是和前台点"结算"完全一样的代码路径，
+--   生成真实的 bill 快照（含当时命中的规则名），报表营收也随之变成引擎算出来的数。
 -- ============================================================================
 
 -- bill 有指向 booking 的外键，必须比 booking 先删；顺序反了整段清理会卡在 1451 上
@@ -32,29 +33,29 @@ insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, e
   ('D20260001', 1, '李文博', '138_0000_0001', date_sub(curdate(), interval 6 day) + interval 19 hour,
    date_sub(curdate(), interval 6 day) + interval 23 hour,
    date_sub(curdate(), interval 6 day) + interval 19 hour + interval 4 minute,
-   date_sub(curdate(), interval 6 day) + interval 23 hour, 'SETTLED', 228.00, 1),
+   date_sub(curdate(), interval 6 day) + interval 23 hour, 'CHECKED_OUT', 0.00, 1),
   ('D20260002', 5, '王思远', '138_0000_0002', date_sub(curdate(), interval 6 day) + interval 20 hour,
    date_sub(curdate(), interval 6 day) + interval 23 hour + interval 30 minute,
    date_sub(curdate(), interval 6 day) + interval 20 hour,
-   date_sub(curdate(), interval 6 day) + interval 23 hour + interval 30 minute, 'SETTLED', 252.00, 2),
+   date_sub(curdate(), interval 6 day) + interval 23 hour + interval 30 minute, 'CHECKED_OUT', 0.00, 2),
   -- 5 天前，跨零点全日房（营业日切割的用例）
   ('D20260003', 8, '张轶群', '138_0000_0003', date_sub(curdate(), interval 5 day) + interval 14 hour,
    date_sub(curdate(), interval 4 day) + interval 12 hour,
    date_sub(curdate(), interval 5 day) + interval 14 hour + interval 11 minute,
-   date_sub(curdate(), interval 4 day) + interval 12 hour + interval 20 minute, 'SETTLED', 388.00, 1),
+   date_sub(curdate(), interval 4 day) + interval 12 hour + interval 20 minute, 'CHECKED_OUT', 0.00, 1),
   ('D20260004', 2, '陈可欣', '138_0000_0004', date_sub(curdate(), interval 5 day) + interval 13 hour,
    date_sub(curdate(), interval 5 day) + interval 17 hour,
    date_sub(curdate(), interval 5 day) + interval 13 hour,
-   date_sub(curdate(), interval 5 day) + interval 17 hour, 'SETTLED', 148.00, 2),
+   date_sub(curdate(), interval 5 day) + interval 17 hour, 'CHECKED_OUT', 0.00, 2),
   -- 4 天前，白天冷时段
   ('D20260005', 3, '刘承宇', '138_0000_0005', date_sub(curdate(), interval 4 day) + interval 10 hour,
    date_sub(curdate(), interval 4 day) + interval 13 hour,
    date_sub(curdate(), interval 4 day) + interval 10 hour,
-   date_sub(curdate(), interval 4 day) + interval 13 hour, 'SETTLED', 128.00, 1),
+   date_sub(curdate(), interval 4 day) + interval 13 hour, 'CHECKED_OUT', 0.00, 1),
   ('D20260006', 14, '赵梦洁', '138_0000_0006', date_sub(curdate(), interval 4 day) + interval 14 hour,
    date_sub(curdate(), interval 3 day) + interval 12 hour,
    date_sub(curdate(), interval 4 day) + interval 14 hour,
-   date_sub(curdate(), interval 3 day) + interval 12 hour, 'SETTLED', 588.00, 2),
+   date_sub(curdate(), interval 3 day) + interval 12 hour, 'CHECKED_OUT', 0.00, 2),
   -- 3 天前，爽约取消（既不占位也不计营收）
   ('D20260007', 6, '孙志豪', '138_0000_0007', date_sub(curdate(), interval 3 day) + interval 21 hour,
    date_sub(curdate(), interval 3 day) + interval 23 hour + interval 30 minute,
@@ -62,29 +63,29 @@ insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, e
   ('D20260008', 9, '周雅静', '138_0000_0008', date_sub(curdate(), interval 3 day) + interval 19 hour,
    date_sub(curdate(), interval 3 day) + interval 22 hour,
    date_sub(curdate(), interval 3 day) + interval 19 hour,
-   date_sub(curdate(), interval 3 day) + interval 22 hour, 'SETTLED', 198.00, 1),
+   date_sub(curdate(), interval 3 day) + interval 22 hour, 'CHECKED_OUT', 0.00, 1),
   -- 2 天前
   ('D20260009', 10, '吴凯旋', '138_0000_0009', date_sub(curdate(), interval 2 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 12 hour,
    date_sub(curdate(), interval 2 day) + interval 20 hour,
-   date_sub(curdate(), interval 1 day) + interval 12 hour, 'SETTLED', 468.00, 1),
+   date_sub(curdate(), interval 1 day) + interval 12 hour, 'CHECKED_OUT', 0.00, 1),
   ('D20260010', 4, '郑晓彤', '138_0000_0010', date_sub(curdate(), interval 2 day) + interval 15 hour,
    date_sub(curdate(), interval 2 day) + interval 19 hour,
    date_sub(curdate(), interval 2 day) + interval 15 hour,
-   date_sub(curdate(), interval 2 day) + interval 19 hour, 'SETTLED', 148.00, 2),
+   date_sub(curdate(), interval 2 day) + interval 19 hour, 'CHECKED_OUT', 0.00, 2),
   -- 昨天，晚间密集（热力图高峰）
   ('D20260011', 1, '马若涵', '138_0000_0011', date_sub(curdate(), interval 1 day) + interval 18 hour,
    date_sub(curdate(), interval 1 day) + interval 22 hour,
    date_sub(curdate(), interval 1 day) + interval 18 hour,
-   date_sub(curdate(), interval 1 day) + interval 22 hour, 'SETTLED', 148.00, 1),
+   date_sub(curdate(), interval 1 day) + interval 22 hour, 'CHECKED_OUT', 0.00, 1),
   ('D20260012', 2, '胡泽宇', '138_0000_0012', date_sub(curdate(), interval 1 day) + interval 19 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour,
    date_sub(curdate(), interval 1 day) + interval 19 hour,
-   date_sub(curdate(), interval 1 day) + interval 23 hour, 'SETTLED', 148.00, 1),
+   date_sub(curdate(), interval 1 day) + interval 23 hour, 'CHECKED_OUT', 0.00, 1),
   ('D20260013', 5, '林雨薇', '138_0000_0013', date_sub(curdate(), interval 1 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour + interval 30 minute,
    date_sub(curdate(), interval 1 day) + interval 20 hour,
-   date_sub(curdate(), interval 1 day) + interval 23 hour + interval 30 minute, 'SETTLED', 202.00, 2),
+   date_sub(curdate(), interval 1 day) + interval 23 hour + interval 30 minute, 'CHECKED_OUT', 0.00, 2),
   ('D20260014', 15, '何书豪', '138_0000_0014', date_sub(curdate(), interval 1 day) + interval 14 hour,
    date_sub(curdate(), interval 0 day) + interval 12 hour,
    date_sub(curdate(), interval 1 day) + interval 14 hour,

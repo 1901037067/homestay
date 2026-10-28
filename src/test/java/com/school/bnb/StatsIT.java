@@ -170,6 +170,23 @@ class StatsIT extends AbstractMysqlIT {
         assertThat(csv).contains("day_cut_time");
     }
 
+    @Test
+    @DisplayName("区间颠倒返回 400 而不是 500，且提示里说清原因")
+    void illegalRangeIsBadRequestNotServerError() throws Exception {
+        String body = mockMvc.perform(get("/api/stats/report")
+                        .session(login())
+                        .param("propertyId", String.valueOf(property.id()))
+                        .param("from", "2026-11-20")
+                        .param("to", "2026-11-10"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode d = MAPPER.readTree(body);
+
+        // 纯函数里抛的是 IllegalArgumentException，不接住会一路变成 500"服务内部错误"
+        assertThat(d.path("code").asInt()).isEqualTo(400);
+        assertThat(d.path("message").asText()).contains("不能早于");
+    }
+
     // ------------------------------------------------------------------ 夹具
 
     /** 直接造一行订单：报表只读 booking 的这几列，造行比走完整流程更能聚焦。 */

@@ -68,8 +68,9 @@ java -version && mvn -v
 ```bash
 source scripts/env.sh                 # 只在"继承了失效 JAVA_HOME"的终端里需要
 docker compose up -d                  # MySQL 8.0，端口 3306，含 utf8mb4 与 +08:00 时区
-bash scripts/reset-demo.sh            # 建库 → Flyway V1/V2 → 灌演示流水
+bash scripts/reset-demo.sh            # 建库 → Flyway 全部迁移 → 灌演示流水（后端需停）
 mvn -B spring-boot:run                # 后端 8080，Swagger 在 /swagger-ui.html
+bash scripts/settle-demo.sh           # 历史单走真实结算，生成账单快照（后端起来之后）
 cd frontend && npm install && npm run dev   # 前端 5173
 ```
 
@@ -316,9 +317,13 @@ mvn -B test -Dtest=OversellWithoutLockIT      # 反向对照：必须出现超�
 "RR 读视图建立在拿锁之前"这个真问题盖住（W3 就是这么漏掉 12/12 超卖的）。
 
 延迟数据只报量级、不报趋势：同一档跑两次 p95 分别是 151ms 和 283ms，10 轮样本的抖动足以淹没任何曲线。
+**锁等待**比延迟稳（它是累计量），而且更有说服力：并发 10/20/50 时行锁等待由 90 次/3.8s
+增至 490 次/16.3s，p50 延迟却稳定在 30–40ms —— 多出来的时间花在等锁上，被分摊到了各线程。
 
-RR/RC 的对比在另一处：`OversellUnderRepeatableReadIT` 把连接池隔离级别强行改回 RR 再跑真实入口并发，
-照样零超卖 —— 说明修复靠的是当前读，不是"应用恰好跑在 READ COMMITTED 上"这个配置。
+RC 与 RR 的对照也补上了（`ConcurrencyBenchRepeatableReadIT`）：同一套压测、只换隔离级别，
+**两边都零超卖**，锁等待次数相同（490），累计时间 RR 比 RC 多约三成，未观察到吞吐差异。
+"正确性不随隔离级别变"这条比吞吐数字重要得多 —— 它说明修复靠的是当前读，
+而不是"应用恰好跑在 RC 上"。
 
 ## 测试
 
@@ -341,8 +346,9 @@ mvn -B test
 | `BillingIT` | 10 条，走 MockMvc + 真实 session：试算=结算=明细相加且 `booking.amount` 与 `bill.total_amount` 同源；**改房型价不回溯已结算账单**（同时证明新开一单确实用了新价，不是缓存）；规则命中改写金额且规则名进快照、删规则后快照仍读得出；停用规则不参与计价；粒度 60→30 让同一张单少收 10 元；超时补收与早退不退；只有 CHECKED_OUT 能结算且不能重复结算（账单恒为一行）；取消单试算返 `3007 NOTHING_TO_BILL`；全日房起步覆盖 22 小时、加时才收超时费；**清空规则的日期/星期/房型限制必须真的落库并改变计价**（MyBatis-Plus 默认更新策略会跳过 null 字段） |
 | `StatsAggregatorTest` | **17 条纯单测，不起容器**：营业日归属与横轴旋转的表驱动（含"06:00 前算前一天"与"同一切割点换成 04:00 就归另一天"）；跨零点全日房只算一个房晚但热力摊两个营业日；凌晨单落在轴尾；取消/释放单不计；营收只认已结算而待结算单列；超时/早退计数；出租率按不同房间数算；区间外单不进任何一天（**这条当场抓出排名与热度没按区间过滤的 bug**）；排行次序；平均出租率按加权而非均值 |
 | `StatsIT` | 6 条，走 MockMvc + 真 MySQL：日序列与合计（参数从 SQL 一路到 JSON 都对）、**05:00 的单在真实数据上确实归前一天且查后一天时不出现**、热度横轴旋转（slot 20 / hour 2）、排行只统计区间内、民宿之间隔离、CSV 带 BOM 与合计行 |
-| `ConcurrencyBenchIT` | 10/20/50 三档并发 × 10 轮，每轮 N 线程经 `CyclicBarrier` 抢同一间房同一时段：断言**每轮恰好 1 单成功**、其余全是 3003、无死锁/超时；并把 markdown 表格写到 `target/压测报告.md` |
+| `ConcurrencyBenchIT` | 10/20/50 三档并发 × 10 轮，每轮 N 线程经 `CyclicBarrier` 抢同一间房同一时段：断言**每轮恰好 1 单成功**、其余全是 3003、无死锁/超时；记录 InnoDB 行锁等待；并把 markdown 表格写到 `target/压测报告.md` |
 | `ConcurrencyBenchPool50IT` | 同上但连接池 50，与默认 10 对照 —— 证明串行点是房间行锁，不是连接数（实施计划 7.4） |
+| `ConcurrencyBenchRepeatableReadIT` | 同条件把隔离级别换成 RR：正确性不变（零超卖），比较锁等待 —— 堵住"是不是恰好靠 RC 配置才对"的追问 |
 | `OversellWithoutLockIT` | **反向对照**：`@SpyBean` 把 `lockOverlapping` 换成普通 `countOverlap`、隔离级别强行拉回 RR，其余不动 → 断言"必须出现超卖"。它若变绿在没有超卖，说明对照失效，正向的"零超卖"也就不再证明任何事 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
@@ -392,10 +398,12 @@ mvn -B test
   先确认端口没被上一个 vite 进程占着（它会静默改端口到 5174，你刷新的其实还是那个坏掉的 5173）。
   排查时先分清两种失败：图标本身坏不坏可以用 SSR 单测（`renderToString(h(m.Ticket))`），
   上次用它证明了 `Document` 没问题、锅在缓存 —— 别一上来就改业务代码。
-- **演示流水里的 `amount` 是手写的**（写在计费引擎之前），和 `/bill/preview` 算出来的数并不都相等；
-  已结算的历史行也没有 `bill` 快照行，界面上会显示"实时试算"而不是"账单快照"。
-  真正点过结算的单不受影响（金额由 `PriceCalculator` 说了算并写回 `booking.amount`）。
-  W8 整理演示数据时收掉：把那批行的状态改成 `CHECKED_OUT` 再逐笔调 `/settle` 生成真快照。
+- **演示数据要分两步**：`reset-demo.sh` 灌出来的历史订单是「已退房未结算、金额为 0」，
+  金额故意不手写 —— 手写的数和 `/bill/preview` 算的对不上，演示时点开历史账单会显示
+  "实时试算"而不是"账单快照"。起后端之后必须再跑 `bash scripts/settle-demo.sh`，
+  它逐笔调 `/settle`，于是这 13 笔走的是与前台点"结算"完全相同的代码路径，
+  生成真快照（含当时命中的规则名），报表营收也随之变成引擎算出来的数。
+  漏跑这一步的表现很好认：订单列表里金额全是「未结算」。
 - **改了 `.vue` 但浏览器里跑的还是旧编译产物**：症状是代码明明在文件里（`grep` 得到），
   页面行为却是旧的；再一看 `getAttribute('style')` 里少了一个属性，其实是那格宽度被算成了
   负数百分比、被 CSS 丢掉。W6 收尾时踩过一次，重启 vite（顺带 `rm -rf node_modules/.vite`）即好。

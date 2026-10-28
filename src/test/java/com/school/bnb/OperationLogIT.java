@@ -5,12 +5,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.school.bnb.dto.PropertyReq;
+import com.school.bnb.dto.RateRuleReq;
 import com.school.bnb.dto.RoomReq;
 import com.school.bnb.dto.RoomTypeReq;
 import com.school.bnb.entity.OperationLog;
 import com.school.bnb.entity.Room;
 import com.school.bnb.service.OperationLogService;
 import com.school.bnb.service.PropertyService;
+import com.school.bnb.service.RateRuleService;
 import com.school.bnb.service.RoomService;
 import com.school.bnb.service.RoomTypeService;
 import com.school.bnb.vo.PropertyVO;
@@ -41,6 +43,7 @@ class OperationLogIT extends AbstractMysqlIT {
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
+    @Autowired RateRuleService rateRuleService;
 
     private MockHttpSession login() throws Exception {
         return (MockHttpSession) mockMvc.perform(post("/api/login")
@@ -148,5 +151,47 @@ class OperationLogIT extends AbstractMysqlIT {
         mockMvc.perform(post("/api/bookings/" + id + "/cancel").session(session)).andExpect(status().isOk());
 
         assertThat(actionsOf(id)).contains("BOOKING_CANCEL");
+    }
+
+    @Test
+    @DisplayName("改价与价格规则也要留痕 —— 它们直接决定账单金额")
+    void priceChangesAreAudited() throws Exception {
+        MockHttpSession session = login();
+        Room room = room();
+        Long typeId = room.getRoomTypeId();
+        var type = roomTypeService.require(typeId);
+
+        // 1) 改房型价格：摘要要能一眼看出变的是哪一项，前后值要留两份快照。
+        //    必须走 HTTP —— 操作人来自登录拦截器写进 AuthContext 的值，
+        //    直接调 roomTypeService.save 会拿到 username=null（这个坑本类开头就写着，我又踩了一次）
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .put("/api/room-types/" + typeId)
+                        .session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"propertyId\":" + type.getPropertyId()
+                                + ",\"name\":\"" + type.getName() + "\""
+                                + ",\"basePrice\":218.00"
+                                + ",\"minHours\":" + type.getMinHours()
+                                + ",\"extraHourPrice\":" + type.getExtraHourPrice()
+                                + ",\"cleanBeforeMinutes\":" + type.getCleanBeforeMinutes()
+                                + ",\"cleanAfterMinutes\":" + type.getCleanAfterMinutes()
+                                + ",\"fullDayStart\":\"" + type.getFullDayStart() + "\""
+                                + ",\"fullDayEnd\":\"" + type.getFullDayEnd() + "\"}"))
+                .andExpect(status().isOk());
+
+        OperationLog price = logService.page(1, 20, "ROOM_TYPE_UPDATE", "room_type", typeId, null)
+                .getRecords().get(0);
+        assertThat(price.getUsername()).as("走 HTTP 的登录态才有操作人").isEqualTo("admin");
+        assertThat(price.getSummary()).contains("基础价").contains("100.00").contains("218.00");
+        assertThat(price.getBeforeJson()).contains("100.00");
+        assertThat(price.getAfterJson()).contains("218.00");
+
+        // 2) 新建价格规则同样留痕：这条以后每次试算都会读到它
+        rateRuleService.save(new RateRuleReq(null, type.getPropertyId(), null, "周末上浮",
+                null, null, List.of(6, 7), null, null, "MULTIPLY", new BigDecimal("1.20"), "ALL", 100, true));
+
+        OperationLog ruleLog = logService.page(1, 20, "RATE_RULE_CREATE", "rate_rule", null, null)
+                .getRecords().get(0);
+        assertThat(ruleLog.getSummary()).contains("周末上浮").contains("×1.20").contains("房费+超时");
     }
 }

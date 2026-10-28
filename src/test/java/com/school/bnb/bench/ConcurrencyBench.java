@@ -12,6 +12,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * 防超卖的压测台 —— <b>打真实入口</b> {@code BookingService.create}，不是打内核。
@@ -48,10 +49,21 @@ public final class ConcurrencyBench {
     public record Result(int threads, int rounds, int success, int conflicts, int others,
                          int oversoldRounds, int maxSuccessInOneRound,
                          long p50Millis, long p95Millis, long maxMillis,
+                         long lockTimeMillis, long lockWaits,
                          List<Integer> successesPerRound) {
     }
 
     public static Result run(BookingService service, Plan plan) {
+        return run(service, plan, null);
+    }
+
+    /**
+     * @param jdbc 传进来就在压测前后各取一次 InnoDB 行锁统计，报告里多两列锁等待数据。
+     *             "两种隔离级别各跑一次、比较锁等待"需要的就是这个数 —— 只看延迟会被
+     *             连接池排队和 GC 噪声盖住，锁等待时间才是真的在量"锁"。
+     */
+    public static Result run(BookingService service, Plan plan, JdbcTemplate jdbc) {
+        long[] lockBefore = lockSnapshot(jdbc);
         int threads = plan.threads();
         int rounds = plan.rounds();
         List<Integer> perRound = new ArrayList<>(rounds);
@@ -121,10 +133,12 @@ public final class ConcurrencyBench {
         }
         java.util.Arrays.sort(samples);
 
+        long[] lockAfter = lockSnapshot(jdbc);
         return new Result(threads, rounds, success.get(), conflicts.get(), others.get(),
                 oversoldRounds, maxInRound,
                 percentile(samples, 0.50), percentile(samples, 0.95),
                 samples.length == 0 ? 0 : samples[samples.length - 1],
+                lockAfter[0] - lockBefore[0], lockAfter[1] - lockBefore[1],
                 perRound);
     }
 
@@ -138,15 +152,30 @@ public final class ConcurrencyBench {
 
     /** 报告用的 markdown 表格行。 */
     public static String markdownRow(String label, Result r, int poolSize) {
-        return "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d |".formatted(
+        return "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |".formatted(
                 label, r.threads(), r.rounds(), poolSize,
                 r.success(), r.conflicts(), r.others(), r.oversoldRounds(),
-                r.p50Millis(), r.p95Millis());
+                r.p50Millis(), r.p95Millis(), r.lockWaits(), r.lockTimeMillis());
     }
 
     public static String markdownHeader() {
         return """
-                | 场景 | 并发线程 | 轮数 | 连接池 | 成功 | 被拒 | 其它异常 | 超卖轮数 | p50(ms) | p95(ms) |
-                |---|---|---|---|---|---|---|---|---|---|""";
+                | 场景 | 并发线程 | 轮数 | 连接池 | 成功 | 被拒 | 其它异常 | 超卖轮数 | p50(ms) | p95(ms) | 行锁等待次数 | 行锁等待(ms) |
+                |---|---|---|---|---|---|---|---|---|---|---|---|""";
+    }
+
+    private static long[] lockSnapshot(JdbcTemplate jdbc) {
+        if (jdbc == null) {
+            return new long[]{0, 0};
+        }
+        Long ms = jdbc.queryForObject("""
+                select variable_value from performance_schema.global_status
+                where variable_name = 'Innodb_row_lock_time'
+                """, Long.class);
+        Long waits = jdbc.queryForObject("""
+                select variable_value from performance_schema.global_status
+                where variable_name = 'Innodb_row_lock_waits'
+                """, Long.class);
+        return new long[]{ms == null ? 0 : ms, waits == null ? 0 : waits};
     }
 }

@@ -1,6 +1,7 @@
 package com.school.bnb.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.school.bnb.common.Paging;
 import com.school.bnb.common.R;
 import com.school.bnb.dto.RoomReq;
 import com.school.bnb.entity.Room;
@@ -39,7 +40,7 @@ public class RoomController {
             @RequestParam(required = false) Long roomTypeId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String keyword) {
-        return R.ok(service.page(page, size, propertyId, roomTypeId, status, keyword));
+        return R.ok(service.page(Paging.page(page), Paging.size(size), propertyId, roomTypeId, status, keyword));
     }
 
     @GetMapping("/{id}")

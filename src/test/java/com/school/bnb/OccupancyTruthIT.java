@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.school.bnb.booking.BookingKernel;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
+import com.school.bnb.dto.CreateBookingCmd;
 import com.school.bnb.dto.CreateBookingReq;
 import com.school.bnb.dto.ExtendReq;
 import com.school.bnb.dto.PropertyReq;
@@ -210,8 +211,30 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         assertThat(occupancyRows(r.getId())).isEqualTo(1);
     }
 
-    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）
+    // ------------------------- ⑤ 同标识不同内容要拒（续：售卖方式也算内容）
 
+    @Test
+    @DisplayName("⑤ 同一 requestId 但售卖方式不同：也必须拒（saleType 决定计费口径）")
+    void sameRequestIdDifferentSaleTypeIsRejected() {
+        Room r = room(2, 0, 0);
+        String rid = "REQ-SALE-" + System.nanoTime();
+        LocalDateTime start = TODAY.withHour(14);
+        LocalDateTime end = TODAY.plusDays(1).withHour(12);
+        // 直接调内核：这条路径用 BookingService 是够不着的 —— 14:00→次日12:00 只可能合法地是
+        // FULL_DAY（钟点不许跨天），所以"同 requestId 改售卖方式"只会出现在更下游的调用者身上。
+        // 比对逻辑就在内核里，测试也放在这一层
+        kernel.createBooking(new CreateBookingCmd(r.getId(), "同一请求", null, start, end, 0, 0,
+                Booking.CONFIRMED, null, rid, "FULL_DAY"));
+
+        assertThatThrownBy(() -> kernel.createBooking(new CreateBookingCmd(r.getId(), "同一请求", null,
+                start, end, 0, 0, Booking.CONFIRMED, null, rid, "HOURLY")))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("钟点与全日房的起步覆盖完全不同，回放旧单会让前端报错信息与实际账单对不上")
+                .isEqualTo(ErrorCode.IDEMPOTENCY_CONFLICT);
+    }
+
+    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）
     @Test
     @DisplayName("⑥ 提前入住也要跑冲突检测：不能把占用前扩进别人已订的时段")
     void earlyCheckInCannotOverlapExistingGuest() {

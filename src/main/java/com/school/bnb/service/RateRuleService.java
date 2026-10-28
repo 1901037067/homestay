@@ -35,12 +35,14 @@ public class RateRuleService {
     private final RateRuleMapper ruleMapper;
     private final PropertyService propertyService;
     private final RoomTypeService roomTypeService;
+    private final OperationLogService opLog;
 
     public RateRuleService(RateRuleMapper ruleMapper, PropertyService propertyService,
-                           RoomTypeService roomTypeService) {
+                           RoomTypeService roomTypeService, OperationLogService opLog) {
         this.ruleMapper = ruleMapper;
         this.propertyService = propertyService;
         this.roomTypeService = roomTypeService;
+        this.opLog = opLog;
     }
 
     // ------------------------------------------------------------------ CRUD
@@ -72,6 +74,7 @@ public class RateRuleService {
         RateRuleDef.Mode mode = parseMode(req.mode());
         List<Integer> days = normalizeWeekdays(req.weekdays());
         validate(req, mode, days);
+        RateRule before = req.id() == null ? null : require(req.id());
 
         RateRule r = new RateRule();
         r.setId(req.id());
@@ -91,16 +94,31 @@ public class RateRuleService {
         if (req.id() == null) {
             ruleMapper.insert(r);
         } else {
-            require(req.id());
             ruleMapper.updateById(r);
         }
+        // 价格规则的每一次改动都会直接改变试算与账单金额 —— 这条必须留痕，
+        // 否则"是谁把周末上浮从 1.2 调到 1.5"在审计里是查不到的
+        opLog.record(before == null ? "RATE_RULE_CREATE" : "RATE_RULE_UPDATE", "rate_rule", r.getId(),
+                ruleSummary(r), before, r);
         return r;
     }
 
     @Transactional
     public void delete(Long id) {
-        require(id);
+        RateRule before = require(id);
         ruleMapper.deleteById(id);
+        opLog.record("RATE_RULE_DELETE", "rate_rule", id, "删除规则｜" + ruleSummary(before), before, null);
+    }
+
+    /** 一句人话：名字 + 改哪笔钱 + 怎么改。审计列表里不该出现一串 JSON。 */
+    private static String ruleSummary(RateRule r) {
+        String how = "OVERRIDE".equals(r.getMode()) ? "¥" + r.getValue() : "×" + r.getValue();
+        String target = switch (r.getAppliesTo() == null ? "ALL" : r.getAppliesTo()) {
+            case "BASE" -> "只改房费";
+            case "OVERAGE" -> "只改超时";
+            default -> "房费+超时";
+        };
+        return String.format("%s（%s，%s）", r.getName(), how, target);
     }
 
     public RateRule require(Long id) {

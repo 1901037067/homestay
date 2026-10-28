@@ -45,6 +45,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 纯函数与工具类抛的入参错误（报表区间颠倒、超过一年、计费粒度非法…）。
+     *
+     * <p>不接住的话会一路落到 {@code Exception} 分支变成 500"服务内部错误"，
+     * 而真正的提示（"报表区间最长一年"）其实全在消息里 —— 前端只能显示一句用户看不懂的话。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public R<Void> handleIllegalArgument(IllegalArgumentException e) {
+        return R.fail(ErrorCode.BAD_REQUEST, e.getMessage() == null ? "参数不合法" : e.getMessage());
+    }
+
+    /**
      * 数据库约束兜底。两类要分开报，否则前端拿到一样的提示没法处理：
      * 唯一键冲突（如同一民宿下房号重复）vs 外键拒删（房间有历史订单）。
      *

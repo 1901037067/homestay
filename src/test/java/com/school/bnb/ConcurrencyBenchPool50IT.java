@@ -20,6 +20,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -48,6 +49,7 @@ class ConcurrencyBenchPool50IT extends AbstractMysqlIT {
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
     @DisplayName("50 线程 + 连接池 50：零超卖，且延迟不再包含排队等连接的时间")
@@ -57,10 +59,11 @@ class ConcurrencyBenchPool50IT extends AbstractMysqlIT {
                 new ConcurrencyBench.Plan(freshRooms(1), SLOT_START, SLOT_END, 10, 1));
 
         ConcurrencyBench.Result r = ConcurrencyBench.run(bookingService,
-                new ConcurrencyBench.Plan(freshRooms(10), SLOT_START, SLOT_END, 50, 10));
+                new ConcurrencyBench.Plan(freshRooms(10), SLOT_START, SLOT_END, 50, 10), jdbc);
 
-        System.out.printf("[pool=50] 50 线程 × %d 轮：成功 %d / 被拒 %d / 超卖轮数 %d / p50 %dms / p95 %dms%n",
-                r.rounds(), r.success(), r.conflicts(), r.oversoldRounds(), r.p50Millis(), r.p95Millis());
+        System.out.printf("[pool=50] 50 线程 × %d 轮：成功 %d / 被拒 %d / 超卖轮数 %d / p50 %dms / p95 %dms / 行锁等待 %d 次 %dms%n",
+                r.rounds(), r.success(), r.conflicts(), r.oversoldRounds(), r.p50Millis(), r.p95Millis(),
+                r.lockWaits(), r.lockTimeMillis());
 
         assertThat(r.oversoldRounds()).isZero();
         assertThat(r.others()).isZero();

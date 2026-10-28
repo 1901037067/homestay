@@ -1,6 +1,7 @@
 package com.school.bnb.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.school.bnb.common.Paging;
 import com.school.bnb.common.R;
 import com.school.bnb.entity.OperationLog;
 import com.school.bnb.service.OperationLogService;
@@ -31,6 +32,6 @@ public class OperationLogController {
             @RequestParam(required = false) String entity,
             @RequestParam(required = false) Long entityId,
             @RequestParam(required = false) String username) {
-        return R.ok(service.page(page, size, action, entity, entityId, username));
+        return R.ok(service.page(Paging.page(page), Paging.size(size), action, entity, entityId, username));
     }
 }

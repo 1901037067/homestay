@@ -56,10 +56,14 @@
           <el-time-picker
             v-model="form.dayCutTime"
             value-format="HH:mm:ss"
+            :step="60"
             placeholder="06:00:00"
             style="width: 100%"
           />
-          <div class="tip">此刻之前的订单算前一天。全日房退房在中午，切在凌晨 6 点最稳。</div>
+          <div class="tip">
+            此刻之前的订单算前一天。只能选整点：报表的一格就是一小时，
+            带分钟的切割点会让"归哪一天"和"画在第几格"对不上。全日房退房在中午，切在凌晨 6 点最稳。
+          </div>
         </el-form-item>
         <div class="pair">
           <el-form-item label="开窗时间" prop="openTime">

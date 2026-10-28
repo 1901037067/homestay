@@ -24,6 +24,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * W8 压测：<b>打真实入口</b>，三档并发，每档多轮，每轮 N 个线程抢同一间房的同一时段。
@@ -47,6 +48,7 @@ class ConcurrencyBenchIT extends AbstractMysqlIT {
     @Autowired PropertyService propertyService;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
     @DisplayName("三档并发 × 10 轮：真实入口零超卖，被拒的都是 3003")
@@ -59,7 +61,7 @@ class ConcurrencyBenchIT extends AbstractMysqlIT {
         List<ConcurrencyBench.Result> results = new ArrayList<>();
         for (int threads : new int[]{10, 20, 50}) {
             results.add(ConcurrencyBench.run(bookingService,
-                    new ConcurrencyBench.Plan(freshRooms(ROUNDS), SLOT_START, SLOT_END, threads, ROUNDS)));
+                    new ConcurrencyBench.Plan(freshRooms(ROUNDS), SLOT_START, SLOT_END, threads, ROUNDS), jdbc));
         }
 
         for (ConcurrencyBench.Result r : results) {

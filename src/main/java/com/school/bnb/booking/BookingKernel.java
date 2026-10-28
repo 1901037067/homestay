@@ -347,12 +347,23 @@ public class BookingKernel {
         }
     }
 
-    /** 幂等内容比对：房间、时段、客人都一致，才算同一个请求。 */
+    /**
+     * 幂等内容比对：房间、时段、客人、售卖方式都一致，才算同一个请求。
+     *
+     * <p><b>必须比 saleType。</b>它不只是个标签，它决定计费口径（钟点起步 3 小时 vs 全日模板 22 小时）。
+     * 同一个 requestId 从 HOURLY 改成 FULL_DAY 重试时若回放旧单，前端会把"改了售卖方式成功"
+     * 报给用户，而库里还是钟点 —— 与"同标识不同内容必须拒"的口径直接冲突。
+     *
+     * <p><b>刻意不比 status。</b>它不是不可变的创建参数：订单会合法地从 HELD 走到 SETTLED。
+     * 把它算进"内容"，会让一次正常的重试在订单被确认之后突然变成"内容不同"。
+     */
     private static boolean sameAsRequest(Booking existing, CreateBookingCmd cmd) {
+        String saleType = cmd.saleType() == null ? SaleType.HOURLY.name() : cmd.saleType();
         return Objects.equals(existing.getRoomId(), cmd.roomId())
                 && Objects.equals(existing.getStartTime(), cmd.startTime())
                 && Objects.equals(existing.getEndTime(), cmd.endTime())
-                && Objects.equals(existing.getGuestName(), cmd.guestName());
+                && Objects.equals(existing.getGuestName(), cmd.guestName())
+                && Objects.equals(existing.getSaleType(), saleType);
     }
 
     private String nextBookingNo() {

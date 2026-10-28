@@ -180,4 +180,19 @@ class RoomCatalogIT extends AbstractMysqlIT {
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.BAD_REQUEST);
     }
+
+    @Test
+    @DisplayName("营业日切割点只收整点：06:30 会被拒")
+    void dayCutTimeMustBeWholeHour() {
+        // 带分钟的切割点会让"归哪一天"按分钟算、"画在第几格"按整点算，两处对不上。
+        // 对民宿业务 06:00 与 06:30 没有实质差别，所以直接限制成整点，而不是让每个公式都带着分钟
+        assertThatThrownBy(() -> propertyService.save(new PropertyReq(null, "半小店" + System.nanoTime(),
+                null, LocalTime.of(6, 30), LocalTime.of(8, 0), LocalTime.of(22, 0))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("整点");
+
+        // 04:00 这种整点是允许的（演示数据里就有）
+        assertThat(propertyService.save(new PropertyReq(null, "整点店" + System.nanoTime(),
+                null, LocalTime.of(4, 0), LocalTime.of(9, 0), LocalTime.of(21, 0))).getId()).isNotNull();
+    }
 }
