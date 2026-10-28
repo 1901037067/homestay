@@ -55,7 +55,10 @@
     <div class="bnb-card chart-card">
       <div class="bnb-card__head">
         <span class="bnb-card__title">逐营业日：营收与出租率</span>
-        <span class="bnb-muted hint">出租率 = 当天卖出去的不同房间数 ÷ 在售房间数</span>
+        <span class="bnb-muted hint">
+          出租率 = 当天卖出去的不同房间数 ÷ 在售房间数（分母是<b>当前</b>在售房间数，
+          房间下架会让历史出租率跟着变 —— 已知简化）
+        </span>
       </div>
       <div ref="trendEl" class="chart" />
     </div>
@@ -125,7 +128,7 @@ const cards = computed(() => {
   const t = report.value?.totals
   if (!t) return []
   return [
-    { label: '已结算营收', value: `¥${Number(t.revenue).toFixed(2)}`, note: `待结算 ¥${Number(t.pendingAmount).toFixed(2)}` },
+    { label: '已结算营收', value: `¥${Number(t.revenue).toFixed(2)}`, note: `待结算 ${t.pendingBookings} 单` },
     { label: '平均出租率', value: `${t.avgOccupancy.toFixed(2)}%`, note: `售出 ${t.soldRoomDays} 个房晚` },
     { label: '订单数', value: t.bookings, note: `在售房间 ${report.value.sellableRooms} 间` },
     { label: '异常退房', value: t.overstay + t.earlyLeave, note: `超时 ${t.overstay} · 早退 ${t.earlyLeave}` }

@@ -96,10 +96,24 @@ public class RoomService {
         if (req.id() == null) {
             roomMapper.insert(r);
         } else {
-            require(req.id());
+            Room existing = require(req.id());
+            // 有订单的房间不许跨店改挂：报表与营收是按"房间当前所属民宿"归集的，
+            // 改挂会把历史营收一起搬到另一家店 —— 对账时就成了凭空多出来的收入。
+            // 与房型的处理保持一致（那条规则在 RoomTypeService 里）
+            if (!existing.getPropertyId().equals(req.propertyId()) && bookingCount(req.id()) > 0) {
+                throw new BizException(ErrorCode.HAS_CHILDREN,
+                        "该房间已有 " + bookingCount(req.id()) + " 条订单，不能改挂到其它民宿；"
+                                + "需要换店请新建房间，旧房间下架保留历史");
+            }
             roomMapper.updateById(r);
         }
         return r;
+    }
+
+    private long bookingCount(Long roomId) {
+        Long n = bookingMapper.selectCount(
+                new LambdaQueryWrapper<Booking>().eq(Booking::getRoomId, roomId));
+        return n == null ? 0 : n;
     }
 
     /** 只改状态 —— 下架是删除的替代动作（实施计划 2.6）。 */

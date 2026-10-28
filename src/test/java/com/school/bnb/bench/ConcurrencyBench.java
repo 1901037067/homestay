@@ -46,9 +46,13 @@ public final class ConcurrencyBench {
      * @param conflicts      被正确拒绝的请求数
      * @param others         其它异常（死锁、超时等），非 0 说明系统在压力下不稳
      */
+    /**
+     * @param samples 延迟样本数 = 本轮所有请求数（成功 + 被拒 + 异常），不是"成功数"。
+     *                报告里一并给出，读者才能判断 p50/p95 有多少依据。
+     */
     public record Result(int threads, int rounds, int success, int conflicts, int others,
                          int oversoldRounds, int maxSuccessInOneRound,
-                         long p50Millis, long p95Millis, long maxMillis,
+                         int samples, long p50Millis, long p95Millis, long maxMillis,
                          long lockTimeMillis, long lockWaits,
                          List<Integer> successesPerRound) {
     }
@@ -91,21 +95,30 @@ public final class ConcurrencyBench {
                     try {
                         gate.await();
                         long t0 = System.nanoTime();
-                        service.create(new CreateBookingReq(roomId, "压测客人", null,
-                                plan.start(), plan.end(), Booking.CONFIRMED, null, "HOURLY", requestId));
-                        success.incrementAndGet();
-                        roundSuccess.incrementAndGet();
-                        latencies.set(seq.getAndIncrement(), (int) ((System.nanoTime() - t0) / 1_000_000));
-                    } catch (BizException e) {
-                        if (e.getCode() == ErrorCode.ROOM_TIME_CONFLICT) {
-                            conflicts.incrementAndGet();
-                        } else {
+                        try {
+                            service.create(new CreateBookingReq(roomId, "压测客人", null,
+                                    plan.start(), plan.end(), Booking.CONFIRMED, null, "HOURLY", requestId));
+                            success.incrementAndGet();
+                            roundSuccess.incrementAndGet();
+                        } catch (BizException e) {
+                            if (e.getCode() == ErrorCode.ROOM_TIME_CONFLICT) {
+                                conflicts.incrementAndGet();
+                            } else {
+                                others.incrementAndGet();
+                                log.warn("压测遇到非冲突业务异常: {}", e.getMessage());
+                            }
+                        } catch (Exception e) {
                             others.incrementAndGet();
-                            log.warn("压测遇到非冲突业务异常: {}", e.getMessage());
+                            log.warn("压测遇到异常: {}", e.toString());
                         }
-                    } catch (Exception e) {
-                        others.incrementAndGet();
-                        log.warn("压测遇到异常: {}", e.toString());
+                        // 延迟对**每一次**请求都记：只统计成功者会让样本从"每个请求"缩到"每轮一个"，
+                        // 十轮就只有 10 个样本，还全是同一条成功路径，撑不起"延迟不随并发变化"这种话
+                        latencies.set(seq.getAndIncrement(), (int) ((System.nanoTime() - t0) / 1_000_000));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } catch (java.util.concurrent.BrokenBarrierException e) {
+                        // 屏障被破坏说明压测本身出了状况，必须让用例红，而不是记一条"其它异常"糊过去
+                        throw new IllegalStateException("并发屏障被破坏，本轮压测作废", e);
                     }
                 }, "bench-" + r + "-" + i);
                 t.start();
@@ -135,7 +148,7 @@ public final class ConcurrencyBench {
 
         long[] lockAfter = lockSnapshot(jdbc);
         return new Result(threads, rounds, success.get(), conflicts.get(), others.get(),
-                oversoldRounds, maxInRound,
+                oversoldRounds, maxInRound, samples.length,
                 percentile(samples, 0.50), percentile(samples, 0.95),
                 samples.length == 0 ? 0 : samples[samples.length - 1],
                 lockAfter[0] - lockBefore[0], lockAfter[1] - lockBefore[1],
@@ -152,16 +165,16 @@ public final class ConcurrencyBench {
 
     /** 报告用的 markdown 表格行。 */
     public static String markdownRow(String label, Result r, int poolSize) {
-        return "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |".formatted(
+        return "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |".formatted(
                 label, r.threads(), r.rounds(), poolSize,
-                r.success(), r.conflicts(), r.others(), r.oversoldRounds(),
+                r.success(), r.conflicts(), r.others(), r.oversoldRounds(), r.samples(),
                 r.p50Millis(), r.p95Millis(), r.lockWaits(), r.lockTimeMillis());
     }
 
     public static String markdownHeader() {
         return """
-                | 场景 | 并发线程 | 轮数 | 连接池 | 成功 | 被拒 | 其它异常 | 超卖轮数 | p50(ms) | p95(ms) | 行锁等待次数 | 行锁等待(ms) |
-                |---|---|---|---|---|---|---|---|---|---|---|---|""";
+                | 场景 | 并发线程 | 轮数 | 连接池 | 成功 | 被拒 | 其它异常 | 超卖轮数 | 延迟样本 | p50(ms) | p95(ms) | 行锁等待次数 | 行锁等待(ms) |
+                |---|---|---|---|---|---|---|---|---|---|---|---|---|""";
     }
 
     private static long[] lockSnapshot(JdbcTemplate jdbc) {

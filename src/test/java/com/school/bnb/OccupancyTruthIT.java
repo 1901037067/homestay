@@ -287,8 +287,60 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         assertThat(overlappingRows(r.getId())).isZero();
     }
 
-    // -------------------------- ⑧ 待清扫是确认式闸门，不是固定时段（第三轮审阅第 2 条）
+    // ------- ⑨ 入住本身也要验"这间房现在能不能交出去"（第四轮审阅第 1 条）
 
+    @Test
+    @DisplayName("⑨ 按时入住也拦得住：上一位客人超时未退房，就不能把房交给下一位")
+    void onTimeCheckInIsBlockedByOverstayingGuest() {
+        Room r = room(2, 0, 0);
+        // 顺序很重要：B 必须在 A 变成"超时在住"之前就订好，
+        // 否则连创建 B 都会被开单闸门挡住，就测不到"入住这一支"了
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+        BookingVO a = book(r.getId(), TODAY.withHour(10), TODAY.withHour(12), "HOURLY", null);
+        kernel.checkIn(a.id(), TODAY.withHour(10));   // A 住进去、且此刻已过 12:00 未退
+
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(14)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("开新单时的闸门拦不住「已存在的订单去兑付」")
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+        assertThat(kernel.require(b.id()).getStatus()).as("入住状态随事务回滚").isEqualTo(Booking.CONFIRMED);
+        assertThat(overlappingRows(r.getId())).isZero();
+    }
+
+    @Test
+    @DisplayName("⑨ 房间还在等清扫时不能办入住；点完清扫就可以")
+    void onTimeCheckInIsBlockedByPendingCleaning() {
+        Room r = room(2, 0, 30);
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+        BookingVO a = book(r.getId(), TODAY.withHour(9), TODAY.withHour(12), "HOURLY", null);
+        kernel.checkIn(a.id(), TODAY.withHour(9));
+        kernel.checkOut(a.id(), TODAY.withHour(12), 30);          // 留下 CLEANING 行
+
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(14)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("没打扫的房不能进人 —— 这正是「保洁点了才算能卖」的含义")
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        bookingService.finishCleaning(r.getId());
+        assertThat(kernel.checkIn(b.id(), TODAY.withHour(14)).getStatus()).isEqualTo(Booking.IN_USE);
+    }
+
+    @Test
+    @DisplayName("⑨ 房间在办入住期间被改成维修，也不能办")
+    void checkInIsBlockedWhenRoomIsNoLongerOnSale() {
+        Room r = room(2, 0, 0);
+        BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.withHour(18), "HOURLY", null);
+        jdbc.update("update room set status = 'MAINTENANCE' where id = ?", r.getId());
+
+        assertThatThrownBy(() -> kernel.checkIn(b.id(), TODAY.withHour(14)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
+    }
+
+    // -------------------------- ⑧ 待清扫是确认式闸门，不是固定时段（第三轮审阅第 2 条）
     @Test
     @DisplayName("⑧ 没点「清扫完成」就一直挡房，预计时长过去也不例外；可售查询同口径")
     void unconfirmedCleaningKeepsBlockingPastItsEstimate() {

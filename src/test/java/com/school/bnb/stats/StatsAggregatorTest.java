@@ -140,10 +140,31 @@ class StatsAggregatorTest {
             var day = r.daily().get(0);
 
             assertThat(day.revenue()).isEqualByComparingTo("148");
-            assertThat(day.pendingAmount()).isEqualByComparingTo("188");
+            assertThat(day.pendingBookings()).as("待结算按单数统计").isEqualTo(1);
             assertThat(day.soldRooms()).as("三间房都卖出去过").isEqualTo(3);
             assertThat(r.totalRevenue()).isEqualByComparingTo("148");
-            assertThat(r.totalPending()).isEqualByComparingTo("188");
+            assertThat(r.totalPendingBookings()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("只查后一天时，前一天入住、跨进窗口的住宿仍要出现在热力图里")
+        void heatIncludesStayStartedBeforeTheRange() {
+            // 审阅场景：11-10 14:00 → 11-11 12:00，只查 11-11 这一天
+            StatRow fullDay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-10T14:00", "2026-11-11T12:00", null, "388");
+
+            var onlyD2 = StatsAggregator.aggregate(
+                    new StatsAggregator.Input(D2, D2, CUT_0600, 10, List.of(fullDay)));
+
+            // 房晚与营收按"入住营业日"归属 → 不属于 11-11
+            assertThat(onlyD2.daily().get(0).soldRooms()).isZero();
+            assertThat(onlyD2.totalRevenue()).isEqualByComparingTo("0");
+            // 但热度按"住宿区间是否相交" → 11-11 的 06:00–11:00 六格必须在
+            // 第一版把整笔订单跳过了，于是换个查询区间图就变形
+            assertThat(onlyD2.heat()).hasSize(6)
+                    .allSatisfy(h -> assertThat(h.businessDay()).isEqualTo(D2));
+            assertThat(onlyD2.heat()).extracting(StatsAggregator.Heat::hour)
+                    .containsExactly(6, 7, 8, 9, 10, 11);
         }
 
         @Test

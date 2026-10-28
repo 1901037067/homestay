@@ -33,8 +33,8 @@ public interface StatsMapper {
                    b.sale_type, b.status, b.start_time, b.end_time, b.actual_check_out, b.amount
             from booking b
             join room r on r.id = b.room_id
-            where b.start_time &gt;= #{from}
-              and b.start_time &lt; #{to}
+            where b.start_time &lt; #{to}
+              and b.end_time &gt; #{from}
             <if test="propertyId != null">
               and r.property_id = #{propertyId}
             </if>

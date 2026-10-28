@@ -28,7 +28,12 @@ public record StatsVO(
         List<StatsAggregator.Heat> heat,
         List<StatsAggregator.Rank> ranking) {
 
-    public record Totals(BigDecimal revenue, BigDecimal pendingAmount, int soldRoomDays,
+    /**
+     * @param pendingBookings 已退房未结算的<b>单数</b>。刻意不给"待结算金额"：
+     *                        amount 在结算那一刻才写回，退房后一直是 0，
+     *                        按它求和永远是 0 元，不如老实报单数
+     */
+    public record Totals(BigDecimal revenue, int pendingBookings, int soldRoomDays,
                          double avgOccupancy, int bookings, int overstay, int earlyLeave) {
     }
 }

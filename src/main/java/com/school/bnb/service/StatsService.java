@@ -49,7 +49,7 @@ public class StatsService {
         int earlyLeave = r.daily().stream().mapToInt(StatsAggregator.Daily::earlyLeave).sum();
 
         return new StatsVO(p.getId(), p.getName(), p.getDayCutTime(), start, end, sellable,
-                new StatsVO.Totals(r.totalRevenue(), r.totalPending(), r.totalSoldRoomDays(),
+                new StatsVO.Totals(r.totalRevenue(), r.totalPendingBookings(), r.totalSoldRoomDays(),
                         r.avgOccupancy(), bookings, overstay, earlyLeave),
                 r.daily(), r.heat(), r.ranking());
     }
@@ -67,14 +67,14 @@ public class StatsService {
 
     static String toCsv(StatsVO vo) {
         StringBuilder sb = new StringBuilder("\uFEFF");   // BOM：少了它 Excel 会按 GBK 读，中文全乱
-        sb.append("营业日,可售房间,售出房间,出租率%,已结算营收,待结算,订单数,超时未退房,提前退房\n");
+        sb.append("营业日,可售房间,售出房间,出租率%,已结算营收,待结算单数,订单数,超时未退房,提前退房\n");
         for (StatsAggregator.Daily d : vo.daily()) {
             sb.append(d.businessDay()).append(',')
                     .append(d.sellableRooms()).append(',')
                     .append(d.soldRooms()).append(',')
                     .append(d.occupancyRate().toPlainString()).append(',')
                     .append(d.revenue().toPlainString()).append(',')
-                    .append(d.pendingAmount().toPlainString()).append(',')
+                    .append(d.pendingBookings()).append(',')
                     .append(d.bookings()).append(',')
                     .append(d.overstay()).append(',')
                     .append(d.earlyLeave()).append('\n');
@@ -84,7 +84,7 @@ public class StatsService {
                 .append(t.soldRoomDays()).append(',')
                 .append(String.format("%.2f", t.avgOccupancy())).append(',')
                 .append(t.revenue().toPlainString()).append(',')
-                .append(t.pendingAmount().toPlainString()).append(',')
+                .append(t.pendingBookings()).append(',')
                 .append(t.bookings()).append(',')
                 .append(t.overstay()).append(',')
                 .append(t.earlyLeave()).append('\n');

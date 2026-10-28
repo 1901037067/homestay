@@ -6,6 +6,7 @@ import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.CreateBookingCmd;
 import com.school.bnb.entity.Booking;
 import com.school.bnb.entity.Occupancy;
+import com.school.bnb.entity.Room;
 import com.school.bnb.mapper.BookingMapper;
 import com.school.bnb.mapper.OccupancyMapper;
 import com.school.bnb.mapper.RoomMapper;
@@ -184,15 +185,21 @@ public class BookingKernel {
     }
 
     /**
-     * 入住。把占用块往前扩到<b>实际入住时刻</b>：
-     * 计划 14:00 入住、客人 10:00 就到了，那 10:00–14:00 也必须算已占用，
-     * 否则另一位前台能给这间房开一张 10:00–12:00 的钟点单。
+     * 入住：<b>每次办理入住都要验一遍这间房现在到底能不能交出去</b>，再把占用块往前扩到实际入住时刻。
      *
-     * <p><b>扩展出来的那一段同样要跑冲突检测。</b>原来只比"要不要前移"就直接改写
-     * {@code block_start}，于是两个原本互不冲突的预订能被一次入住操作叠到一起：
-     * A 单 10:00–12:00、B 单 14:00–18:00，给 B 办 10:00 提前入住，B 的占用就变成
-     * 10:00–18:00 与 A 重叠 —— 全项目赖以成立的"占用行互不重叠"不变量当场破掉，
-     * 而后续所有判定都是从这个不变量推出来的。这条是外部审阅指出、我核对后确认的真实缺陷。
+     * <p>"能交出去"包含三件事，缺一不可：
+     * <ol>
+     *   <li><b>房间在售</b>——办入住期间可能被改成维修/下架；</li>
+     *   <li><b>没有别人的占用</b>——上一位客人超时未退房、或房间还在等清扫；</li>
+     *   <li><b>要扩出去的那一段也没人占</b>——计划 14:00 入住、客人 10:00 就到，
+     *       10:00–14:00 也得是空的。</li>
+     * </ol>
+     *
+     * <p>这三条曾经只做了第 3 条、而且只在"提前入住"时才跑。于是按时入住这条支路完全没设防：
+     * A 单原定 12:00 退房却没走、B 单 14:05 按计划入住 —— 开新单时的闸门拦的是"新订单"，
+     * 拦不住"已经存在的订单去兑付"，两个人就这么进了同一间房。
+     * 修复的办法是统一成一条路径：<b>删掉自己的占用行 → 按 [min(实际, 计划起点), block_end) 检测 → 重写</b>，
+     * 检测不过就抛异常、整笔随事务回滚（自己的占用行原样保留）。
      *
      * <p>"在住期间持续挡房"不在这里改 block_end，而是写在冲突查询的第二个条件里 ——
      * 占用表要始终满足"行不重叠"这个不变量。
@@ -201,23 +208,37 @@ public class BookingKernel {
     public Booking checkIn(Long bookingId, LocalDateTime actual) {
         Booking booking = require(bookingId);
         roomMapper.selectForUpdate(booking.getRoomId());
+        // 状态在锁之后读，避免用一份可能过期的快照下判断
+        Room room = roomMapper.selectById(booking.getRoomId());
+        if (room == null) {
+            throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + booking.getRoomId());
+        }
+        if (!Room.ON_SALE.equals(room.getStatus())) {
+            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
+                    "房间 " + room.getRoomNo() + " 当前状态 " + room.getStatus() + "，不能办理入住");
+        }
+
         LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
         if (bookingMapper.checkInIfConfirmed(bookingId, at) == 0) {
             throw illegal(booking.getStatus(), Booking.IN_USE);
         }
+
         Occupancy blk = occupancyMapper.findRoomBlock(bookingId);
-        if (blk != null && at.isBefore(blk.getBlockStart())) {
-            LocalDateTime blockEnd = blk.getBlockEnd();
-            // 先删自己再查 —— 排除自己最省事也最不会漏的写法（与改期同一套路）。
-            // 检测不过会抛异常，这次删除随事务回滚，旧占用原样保留
-            occupancyMapper.deleteByBookingId(bookingId);
-            if (!occupancyMapper.lockOverlapping(booking.getRoomId(), at, blockEnd).isEmpty()) {
-                throw new BizException(ErrorCode.ROOM_TIME_CONFLICT,
-                        "提前到 " + at + " 入住会撞上这间房当前的占用（含清扫缓冲）——"
-                                + "请先处理那一单，或按计划时间入住");
-            }
-            writeOccupancy(bookingId, booking.getRoomId(), booking.getStartTime(),
-                    booking.getEndTime(), at, blockEnd);
+        LocalDateTime plannedStart = blk == null ? booking.getStartTime() : blk.getBlockStart();
+        LocalDateTime blockEnd = blk == null ? booking.getEndTime() : blk.getBlockEnd();
+        LocalDateTime effectiveStart = at.isBefore(plannedStart) ? at : plannedStart;
+
+        // 先删自己再查 —— 排除自己最省事也最不会漏的写法（与改期同一套路）。
+        // 检测不过会抛异常，这次删除随事务回滚，旧占用原样保留
+        occupancyMapper.deleteByBookingId(bookingId);
+        if (!occupancyMapper.lockOverlapping(booking.getRoomId(), effectiveStart, blockEnd).isEmpty()) {
+            throw new BizException(ErrorCode.ROOM_TIME_CONFLICT,
+                    "这间房此刻交接不了：可能上一位客人还没退房，或房间还在等清扫。"
+                            + "请先办退房 / 点「清扫完成」，再给客人办入住");
+        }
+        writeOccupancy(bookingId, booking.getRoomId(), booking.getStartTime(),
+                booking.getEndTime(), effectiveStart, blockEnd);
+        if (at.isBefore(plannedStart)) {
             log.info("提前入住 booking={} 占用前扩至 {}", booking.getBookingNo(), at);
         }
         return require(bookingId);

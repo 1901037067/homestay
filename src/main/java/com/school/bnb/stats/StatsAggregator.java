@@ -65,10 +65,10 @@ public final class StatsAggregator {
      * @param soldRooms   当天卖出去的不同房间数（同一间房当天卖两次只算一间）
      * @param occupancyRate soldRooms / sellableRooms，保留两位小数
      * @param revenue     已结算金额
-     * @param pendingAmount 已退房未结算金额 —— 与 revenue 分列，不混为一谈
+     * @param pendingBookings 已退房未结算的<b>单数</b>（不是金额，见下面为什么）
      */
     public record Daily(LocalDate businessDay, int sellableRooms, int soldRooms,
-                        BigDecimal occupancyRate, BigDecimal revenue, BigDecimal pendingAmount,
+                        BigDecimal occupancyRate, BigDecimal revenue, int pendingBookings,
                         int bookings, int overstay, int earlyLeave) {
     }
 
@@ -80,7 +80,7 @@ public final class StatsAggregator {
     }
 
     public record Result(List<Daily> daily, List<Heat> heat, List<Rank> ranking,
-                         BigDecimal totalRevenue, BigDecimal totalPending,
+                         BigDecimal totalRevenue, int totalPendingBookings,
                          int totalSoldRoomDays, double avgOccupancy) {
     }
 
@@ -101,11 +101,17 @@ public final class StatsAggregator {
             if (r.getStatus() == null || VOID.contains(r.getStatus())) {
                 continue;
             }
+            // 热度先算：它按"住宿区间与查询窗口是否相交"统计，与房晚/营收的归属口径**不同**。
+            // 一笔昨天 14:00 → 今天 12:00 的单，房晚算昨天，但它确实占着今天 06:00–12:00 那六格。
+            // 第一版把"入住营业日不在区间内"的整笔订单直接跳过了，于是"只查今天"时
+            // 热力图里这六格凭空消失 —— 热力图随查询范围变形，这在论文里是硬伤。
+            spreadHours(r, in, heatRooms);
+
             LocalDate bd = businessDay(r.getStartTime(), cutHour, cutMinute);
             DailyAcc d = acc.get(bd);
-            // 区间外的单必须整条跳过，而不是"只跳过日序列那一部分"：
-            // 排名与热度原来是无条件累加的，于是查 11-10～11-11 时，
-            // 11-09 和 11-12 的单也会出现在排行里 —— 指标卡与排行互相打脸
+            // 房晚、营收、单数、超时/早退、排行都只认"入住营业日"落在区间内的单。
+            // 注意这里是 continue：不能只跳过日序列那一部分，否则区间外的单会混进排行，
+            // 指标卡与排行互相打脸
             if (d == null) {
                 continue;
             }
@@ -114,7 +120,10 @@ public final class StatsAggregator {
             if (SETTLED.equals(r.getStatus())) {
                 d.revenue = d.revenue.add(money(r.getAmount()));
             } else if (CHECKED_OUT.equals(r.getStatus())) {
-                d.pending = d.pending.add(money(r.getAmount()));
+                // 只数单数，不累金额：正常流程里 amount 在结算那一刻才写回，
+                // 退房后一直是 0。之前按"累加 amount"统计，于是真实的待结算永远是 0 元，
+                // 只有测试里手写金额的那行才显得对 —— 那是测试在骗自己
+                d.pendingBookings++;
             }
             if (r.getActualCheckOut() != null) {
                 if (r.getActualCheckOut().isAfter(r.getEndTime())) {
@@ -129,26 +138,24 @@ public final class StatsAggregator {
             if (SETTLED.equals(r.getStatus())) {
                 ra.revenue = ra.revenue.add(money(r.getAmount()));
             }
-
-            spreadHours(r, in, heatRooms);
         }
 
         List<Daily> daily = new ArrayList<>(acc.size());
         int totalSold = 0;
         BigDecimal totalRevenue = BigDecimal.ZERO;
-        BigDecimal totalPending = BigDecimal.ZERO;
+        int totalPendingBookings = 0;
         for (DailyAcc a : acc.values()) {
             daily.add(a.toDaily(in.sellableRooms()));
             totalSold += a.soldRooms.size();
             totalRevenue = totalRevenue.add(a.revenue);
-            totalPending = totalPending.add(a.pending);
+            totalPendingBookings += a.pendingBookings;
         }
         int days = Math.max(1, acc.size());
         double avg = in.sellableRooms() <= 0 ? 0
                 : round2(totalSold * 100.0 / ((double) in.sellableRooms() * days));
 
         return new Result(daily, toHeat(heatRooms, cutHour, in.from(), in.to()), toRanking(rank),
-                money(totalRevenue), money(totalPending), totalSold, avg);
+                money(totalRevenue), totalPendingBookings, totalSold, avg);
     }
 
     /** 营业日归属：往前推切割点后取日期。这是全报表唯一的归一化入口。 */
@@ -237,7 +244,7 @@ public final class StatsAggregator {
         final LocalDate day;
         final Set<Long> soldRooms = new HashSet<>();
         BigDecimal revenue = BigDecimal.ZERO;
-        BigDecimal pending = BigDecimal.ZERO;
+        int pendingBookings;
         int bookings;
         int overstay;
         int earlyLeave;
@@ -251,7 +258,7 @@ public final class StatsAggregator {
                     : BigDecimal.valueOf(soldRooms.size() * 100.0 / sellableRooms)
                             .setScale(2, RoundingMode.HALF_UP);
             return new Daily(day, sellableRooms, soldRooms.size(), rate,
-                    money(revenue), money(pending), bookings, overstay, earlyLeave);
+                    money(revenue), pendingBookings, bookings, overstay, earlyLeave);
         }
     }
 

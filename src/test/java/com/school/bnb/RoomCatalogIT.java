@@ -182,6 +182,31 @@ class RoomCatalogIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("有订单的房间不许跨店改挂 —— 否则历史营收会跟着换店")
+    void roomWithBookingsCannotMoveToAnotherProperty() {
+        PropertyVO a = newProperty();
+        PropertyVO b = newProperty();
+        Room room = roomService.save(new RoomReq(null, a.id(), newRoomType(a.id(), 0).id(), "901", 1, null));
+        // 报表与营收按"房间当前所属民宿"归集，所以先给它一笔订单
+        kernel.createBooking(new CreateBookingCmd(room.getId(), "客人", null,
+                LocalDateTime.now().plusDays(1).withHour(10),
+                LocalDateTime.now().plusDays(1).withHour(12),
+                0, 0, Booking.CONFIRMED, null, null, "HOURLY"));
+
+        RoomTypeVO typeB = newRoomType(b.id(), 0);
+        assertThatThrownBy(() -> roomService.save(
+                new RoomReq(room.getId(), b.id(), typeB.id(), "901", 1, null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("改挂会把历史营收一起搬到另一家店，对账时凭空多一笔收入")
+                .isEqualTo(ErrorCode.HAS_CHILDREN);
+
+        // 同一家店内换房号、换房型仍然允许
+        assertThat(roomService.save(new RoomReq(room.getId(), a.id(), room.getRoomTypeId(), "901A", 1, null))
+                .getRoomNo()).isEqualTo("901A");
+    }
+
+    @Test
     @DisplayName("营业日切割点只收整点：06:30 会被拒")
     void dayCutTimeMustBeWholeHour() {
         // 带分钟的切割点会让"归哪一天"按分钟算、"画在第几格"按整点算，两处对不上。
