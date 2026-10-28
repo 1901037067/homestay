@@ -1,0 +1,217 @@
+/* ==========================================================================
+   Apple 风格设计令牌
+   ==========================================================================
+   取值依据：Apple HIG 系统色（含明暗双模的 accessible 变体）与 apple.com 的
+   排版规范。两条容易被忽略但很关键的细节：
+
+   1) 浅色模式下"文字用的红/绿/橙"不等于图标用的红/绿/橙。
+      systemRed #FF3B30 在白底上只有约 3.9:1，做正文不达标；
+      Apple 为此单独给了 #D70015。下面 success/warning/danger 都取文字版。
+   2) 字体不加载 webfont。Apple 自己的做法就是走系统栈 —— macOS/iOS 命中
+      SF Pro，Windows 命中 Segoe UI，中文回退 PingFang / 微软雅黑。
+      零下载、零闪烁，也避开国内 CDN 拉字体失败的问题。
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* --- 字体 --- */
+  --bnb-font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Segoe UI", Roboto, Arial, sans-serif;
+  --bnb-fs-caption: 11px;
+  --bnb-fs-footnote: 12px;
+  --bnb-fs-subheadline: 15px;
+  --bnb-fs-body: 17px;          /* Apple 的正文基准比 Material 大一号，别改小 */
+  --bnb-fs-callout: 13px;
+  --bnb-fs-title3: 20px;
+  --bnb-fs-title2: 24px;
+  --bnb-fs-title1: 28px;
+  --bnb-fs-large: 34px;
+  /* 大字号收紧字距，小字号放开 —— Apple 的 tracking 方向是随字号变号的 */
+  --bnb-ls-display: -0.021em;
+  --bnb-ls-title: -0.016em;
+  --bnb-ls-body: -0.012em;
+  --bnb-lh-tight: 1.18;
+  --bnb-lh-body: 1.6;           /* SKILL.md 要求正文 1.5–1.75 */
+
+  /* --- 底色与表面 --- */
+  --bnb-bg-page: #f5f5f7;
+  --bnb-bg-card: #ffffff;
+  --bnb-bg-elevated: #ffffff;
+  --bnb-bg-inset: #fbfbfd;
+  --bnb-fill-secondary: rgba(120, 120, 128, 0.12);
+  --bnb-fill-tertiary: rgba(120, 120, 128, 0.08);
+
+  /* --- 文字 --- */
+  --bnb-text-primary: #1d1d1f;
+  --bnb-text-secondary: #6e6e73;
+  --bnb-text-tertiary: #86868b;
+  --bnb-text-link: #0066cc;
+
+  /* --- 分隔与描边 --- */
+  --bnb-separator: rgba(0, 0, 0, 0.08);
+  --bnb-separator-opaque: #e5e5ea;
+  --bnb-hairline: rgba(0, 0, 0, 0.045);
+
+  /* --- 强调色与语义色（文字用可达标变体） --- */
+  --bnb-accent: #0071e3;
+  --bnb-accent-hover: #0077ed;
+  --bnb-accent-active: #0062c4;
+  --bnb-accent-on: #ffffff;
+  --bnb-accent-soft: rgba(0, 113, 227, 0.1);
+  --bnb-success: #248a3d;
+  --bnb-success-soft: rgba(52, 199, 89, 0.14);
+  --bnb-warning: #a65e00;
+  --bnb-warning-soft: rgba(255, 149, 0, 0.16);
+  --bnb-danger: #d70015;
+  --bnb-danger-soft: rgba(255, 59, 48, 0.12);
+  --bnb-info: #6e6e73;
+
+  /* --- 圆角（Apple 用连续圆角，视觉上比同数值的普通圆角更饱满） --- */
+  --bnb-radius-sm: 8px;
+  --bnb-radius-md: 12px;
+  --bnb-radius-lg: 18px;
+  --bnb-radius-xl: 22px;
+  --bnb-radius-pill: 980px;
+
+  /* --- 间距：4pt 基准 --- */
+  --bnb-space-1: 4px;
+  --bnb-space-2: 8px;
+  --bnb-space-3: 12px;
+  --bnb-space-4: 16px;
+  --bnb-space-5: 20px;
+  --bnb-space-6: 24px;
+  --bnb-space-8: 32px;
+  --bnb-space-10: 40px;
+  --bnb-space-12: 48px;
+
+  /* --- 层级：Apple 靠底色差分层，阴影只用来"托起"浮层 --- */
+  --bnb-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.03), 0 6px 20px rgba(0, 0, 0, 0.04);
+  --bnb-shadow-pop: 0 4px 14px rgba(0, 0, 0, 0.1), 0 18px 48px rgba(0, 0, 0, 0.14);
+  --bnb-z-sticky: 10;
+  --bnb-z-overlay: 20;
+
+  /* --- 材质（系统 chrome 的毛玻璃，只给顶栏和浮层用） --- */
+  --bnb-material: rgba(255, 255, 255, 0.72);
+  --bnb-material-blur: saturate(180%) blur(20px);
+
+  /* --- 动效 --- */
+  --bnb-duration-fast: 150ms;
+  --bnb-duration: 220ms;        /* SKILL.md：微交互 150–300ms */
+  --bnb-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* --- 布局 --- */
+  --bnb-nav-w: 224px;
+  --bnb-header-h: 52px;
+  --bnb-content-max: 1200px;
+}
+
+/* ---------- 深色模式 ---------- */
+html.dark {
+  color-scheme: dark;
+
+  --bnb-bg-page: #000000;
+  --bnb-bg-card: #1c1c1e;
+  --bnb-bg-elevated: #2c2c2e;
+  --bnb-bg-inset: #161618;
+  --bnb-fill-secondary: rgba(120, 120, 128, 0.24);
+  --bnb-fill-tertiary: rgba(120, 120, 128, 0.16);
+
+  --bnb-text-primary: #f5f5f7;
+  --bnb-text-secondary: rgba(235, 235, 245, 0.62);
+  --bnb-text-tertiary: rgba(235, 235, 245, 0.38);
+  --bnb-text-link: #409cff;
+
+  --bnb-separator: rgba(84, 84, 88, 0.65);
+  --bnb-separator-opaque: #38383a;
+  --bnb-hairline: rgba(255, 255, 255, 0.08);
+
+  --bnb-accent: #0a84ff;
+  --bnb-accent-hover: #339cff;
+  --bnb-accent-active: #0060c8;
+  --bnb-accent-on: #ffffff;
+  --bnb-accent-soft: rgba(10, 132, 255, 0.18);
+  --bnb-success: #30d158;
+  --bnb-success-soft: rgba(48, 209, 88, 0.18);
+  --bnb-warning: #ff9f0a;
+  --bnb-warning-soft: rgba(255, 159, 10, 0.18);
+  --bnb-danger: #ff453a;
+  --bnb-danger-soft: rgba(255, 69, 58, 0.18);
+  --bnb-info: #98989d;
+
+  --bnb-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 20px rgba(0, 0, 0, 0.4);
+  --bnb-shadow-pop: 0 4px 14px rgba(0, 0, 0, 0.6), 0 18px 48px rgba(0, 0, 0, 0.7);
+
+  --bnb-material: rgba(28, 28, 30, 0.72);
+}
+
+/* ==========================================================================
+   把令牌映射进 Element Plus 的 CSS 变量
+   —— 组件库主题走它自己的变量，不去硬改 .el-* 类名，升级时不会崩
+   ========================================================================== */
+:root {
+  --el-color-primary: var(--bnb-accent);
+  --el-color-primary-light-3: #4d9ce9;
+  --el-color-primary-light-5: #80b8f0;
+  --el-color-primary-light-7: #b3d3f6;
+  --el-color-primary-light-8: #ccdef9;
+  --el-color-primary-light-9: #e6effc;
+  --el-color-primary-dark-2: #005ab5;
+
+  --el-color-success: var(--bnb-success);
+  --el-color-warning: var(--bnb-warning);
+  --el-color-danger: var(--bnb-danger);
+  --el-color-error: var(--bnb-danger);
+  --el-color-info: var(--bnb-info);
+
+  --el-bg-color: var(--bnb-bg-card);
+  --el-bg-color-page: var(--bnb-bg-page);
+  --el-bg-color-overlay: var(--bnb-bg-elevated);
+
+  --el-text-color-primary: var(--bnb-text-primary);
+  --el-text-color-regular: var(--bnb-text-primary);
+  --el-text-color-secondary: var(--bnb-text-secondary);
+  --el-text-color-placeholder: var(--bnb-text-tertiary);
+  --el-text-color-disabled: var(--bnb-text-tertiary);
+
+  --el-border-color: var(--bnb-separator-opaque);
+  --el-border-color-light: var(--bnb-separator-opaque);
+  --el-border-color-lighter: var(--bnb-hairline);
+  --el-border-color-extra-light: var(--bnb-hairline);
+  --el-border-color-hover: var(--bnb-accent);
+
+  --el-fill-color-blank: var(--bnb-bg-card);
+  --el-fill-color-light: var(--bnb-fill-tertiary);
+  --el-fill-color-lighter: var(--bnb-fill-tertiary);
+  --el-fill-color: var(--bnb-fill-secondary);
+
+  --el-border-radius-small: 6px;
+  --el-border-radius-base: 10px;
+  --el-border-radius-round: var(--bnb-radius-pill);
+
+  --el-font-family: var(--bnb-font-family);
+  --el-font-size-extra-small: var(--bnb-fs-caption);
+  --el-font-size-small: var(--bnb-fs-footnote);
+  --el-font-size-base: var(--bnb-fs-subheadline);
+  --el-font-size-medium: var(--bnb-fs-body);
+  --el-font-size-large: var(--bnb-fs-title3);
+
+  --el-box-shadow: var(--bnb-shadow-pop);
+  --el-box-shadow-light: var(--bnb-shadow-card);
+  --el-box-shadow-lighter: var(--bnb-shadow-card);
+
+  /* Apple 的控件比 Element 默认更"高"一点，留白优先 */
+  --el-component-size-large: 48px;
+  --el-component-size: 40px;
+}
+
+html.dark {
+  --el-color-primary-light-3: #3d95e6;
+  --el-color-primary-light-5: #2d7bbf;
+  --el-color-primary-light-7: #1d5588;
+  --el-color-primary-light-8: #163f63;
+  --el-color-primary-light-9: #0f2942;
+  --el-color-primary-dark-2: #3d9cff;
+}

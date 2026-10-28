@@ -17,17 +17,24 @@ springdoc-openapi 2.3.0 · Vue 3 + Vite + Element Plus · JUnit 5 + Testcontaine
 ```
 pom.xml                     单模块 Maven（不做多模块）
 src/main/java/com/school/bnb
-├── controller             认证 / 探针
-├── service                Auth
+├── controller             认证 / 探针 / 民宿 / 房型 / 房间
+├── service                Auth + 房源域三个 Service（含删除守卫）
 ├── mapper                 含手写的 selectForUpdate（MyBatis-Plus 不提供 FOR UPDATE）
 ├── entity                 6 张表
-├── dto
+├── dto                    请求体（带校验注解）
+├── vo                     列表返回体（带出上级名称，前端不必逐行再查）
+├── config                 MyBatis-Plus 分页拦截器
 ├── booking                预订内核 BookingKernel —— 全项目唯一写 occupancy 的入口
 └── common                 统一返回 / 异常 / session 拦截器
 src/main/resources/db/migration  V1 结构、V2 结构性种子
-src/test/java/com/school/bnb     FlywaySchemaIT / BookingKernelIT / SeedPasswordHashTest
+src/test/java/com/school/bnb     FlywaySchemaIT / BookingKernelIT / RoomCatalogIT / SeedPasswordHashTest
 db/demo/seed_demo.sql      演示流水（手动灌，不进 Flyway）
-frontend/                  Vue 3 + Vite，dev proxy 打到 8080
+frontend/src
+├── styles/tokens.css      Apple 设计令牌 + Element Plus 变量覆盖（明暗双模）
+├── styles/base.css        排版、卡片、分段控件、状态胶囊
+├── composables/useTheme.js浅色 / 深色 / 跟随系统，持久化在 localStorage
+├── layout/AppShell.vue    毛玻璃侧栏 + 浮动标题栏
+└── views                  登录 / 概览 / room 下三个管理页（路由级懒加载）
 scripts/                   env.sh / env.ps1 / reset-demo.sh
 docker-compose.yml         开发期 MySQL
 ```
@@ -53,6 +60,7 @@ java -version && mvn -v
 ## 启动
 
 ```bash
+source scripts/env.sh                 # 只在"继承了失效 JAVA_HOME"的终端里需要
 docker compose up -d                  # MySQL 8.0，端口 3306，含 utf8mb4 与 +08:00 时区
 bash scripts/reset-demo.sh            # 建库 → Flyway V1/V2 → 灌演示流水
 mvn -B spring-boot:run                # 后端 8080，Swagger 在 /swagger-ui.html
@@ -61,8 +69,39 @@ cd frontend && npm install && npm run dev   # 前端 5173
 
 浏览器打开 http://localhost:5173 ，账号 `admin` / `Admin@123`（`staff` 同密码，用于演示操作日志）。
 
+`reset-demo.sh` 会 drop database，**跑之前先停后端**。演示中途数据点乱了可以重跑一次，30 秒复原。
+
 前端不直连 8080，走 Vite dev proxy（`frontend/vite.config.js`），这样 `JSESSIONID`
 是同源 cookie，后端不必开 CORS 白名单。
+
+## 界面与主题
+
+按 Apple HIG 做了一套设计令牌（`frontend/src/styles/tokens.css`），通过 Element Plus 自己的
+CSS 变量生效，没有覆盖 `.el-*` 类名，组件库升级不会崩。三个要点：
+
+- **字体不加载 webfont。** Apple 自己就走系统栈：macOS/iOS 命中 SF Pro，Windows 命中 Segoe UI，
+  中文回退 PingFang / 微软雅黑。零下载零闪烁，也避开国内 CDN 拉字体失败。
+- **浅色模式的语义色分"图标用"和"文字用"两套。** `systemRed #FF3B30` 在白底上只有约 3.9:1，
+  做正文不达标，所以文字取 Apple 的可达标变体 `#D70015`（绿 `#248A3D`、橙 `#A65E00` 同理）。
+- **毛玻璃只给顶栏和浮层用**（`backdrop-filter: saturate(180%) blur(20px)`），卡片靠底色差分层，
+  阴影极轻。全站到处半透明是"仿 Apple"最容易做错的地方。
+
+浅色 / 深色 / 跟随系统三档在右上角分段控件，选择存 `localStorage`，`auto` 档跟随系统实时切换。
+
+## 接口（当前）
+
+```
+POST /api/login          GET /api/logout        GET /api/me
+GET  /api/ping           免鉴权探针，确认「应用 + Flyway + 库」三件事同时成立
+GET  /api/properties     POST / PUT /{id} / DELETE /{id}
+GET  /api/room-types     ?propertyId=           POST / PUT /{id} / DELETE /{id}
+GET  /api/rooms          ?page&size&propertyId&roomTypeId&status&keyword
+                         POST / PUT /{id} / PATCH /{id}/status / DELETE /{id}
+```
+
+删除守卫（实施计划 2.6）：房间有历史订单 → `2002 ROOM_HAS_HISTORY`；民宿/房型有下级数据 →
+`2013 HAS_CHILDREN`；同民宿下房号重复 → `2012 DUPLICATE_KEY`。下架走
+`PATCH /api/rooms/{id}/status {"status":"OFFLINE"}`，不要试图删房间。
 
 ## 测试
 
@@ -74,6 +113,7 @@ mvn -B test
 |---|---|
 | `FlywaySchemaIT` | 迁移真的建出 6 张 InnoDB/utf8mb4 表；`uk_booking_kind` 确实是两列；6 个外键齐备；`idx_block` 列序正确；DATETIME 不被时区换算 |
 | `BookingKernelIT` | 并发抢同一时段恰好一单成功；边界相接不算冲突；45 分钟清扫缓冲能挡住近邻单；跨零点全日房覆盖次日上午；取消即删占用行并可再售；**反向对照：不走行锁时数据库自己不拦两个重叠区间**；非法区间被拒 |
+| `RoomCatalogIT` | 民宿→房型→房间三级增改查且列表带出上级名称；房间有历史订单禁删（含"订单已取消但仍有历史"这一例）；有下级数据禁删民宿与房型；状态筛选、房号搜索、翻页不重不漏；房型不能挂到别的民宿下 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
@@ -89,4 +129,10 @@ mvn -B test
   历史订单在 occupancy 里没有行。
 - 任何写 `occupancy` 的方法，第一句必须是 `roomMapper.selectForUpdate(roomId)`。
   漏一条就可能在并发下超卖，而且只在并发下复现。
+- **MyBatis-Plus 3.5.9 起 `PaginationInnerInterceptor` 拆到了 `mybatis-plus-jsqlparser`**，
+  只引 starter 会编译不过（报"找不到符号"，但符号确实在 extension 的包里）。别去翻 MP 的旧文档。
+- **`@Container` 注解的 Testcontainers 容器会按测试类停止**，多个 IT 类共享时必须用
+  静态块 `start()` 的 singleton 写法，否则第二个测试类拿到已关闭的连接。
 - Windows 控制台是 cp936，`mvn` 的中文报错会乱码；需要读结果时落到文件再用编辑器打开。
+  Git Bash 里含空格的 PATH 条目（`C:\Program Files\...`）不能让 `java` 直接执行，
+  但 Maven 走 `JAVA_HOME` 是好的 —— `scripts/env.sh` 已用 `cygpath` 转成 POSIX 形式。

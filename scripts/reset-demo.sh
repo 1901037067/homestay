@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # 演示数据一键重置（实施计划第 6 节）
-# 前提：docker compose up -d 且后端至少启动过一次（或者就用本脚本，它会自己建库）
-# 用法： bash scripts/reset-demo.sh
+# 前提：docker compose up -d，且后端进程已停（本脚本会 drop database，
+#       后端连着的话池里的连接会拿到已消失的 schema）
+# 用法： source scripts/env.sh && bash scripts/reset-demo.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# 检查 JAVA_HOME 而不是 java 命令：Git Bash 里含空格的 PATH 条目（"Program Files"）
+# 会导致直接敲 java 找不到，但 Maven 用 JAVA_HOME 是好的 —— 别把这两件事混为一谈。
+if [ -z "${JAVA_HOME:-}" ] || [ ! -x "${JAVA_HOME}/bin/java.exe" ]; then
+  echo "JAVA_HOME 未指向可用 JDK：先执行  source scripts/env.sh  再重跑本脚本" >&2
+  exit 1
+fi
 
 MYSQL_PWD=bnb_dev_123
 MVN="${MVN:-E:/02_software/05_programming/04_IntelliJ_IDEA/plugins/maven/lib/maven3/bin/mvn}"

@@ -13,6 +13,12 @@ public final class ErrorCode {
     public static final int ROOM_HAS_HISTORY = 2002;
     public static final int ROOM_NOT_ON_SALE = 2003;
 
+    public static final int PROPERTY_NOT_FOUND = 2010;
+    public static final int ROOM_TYPE_NOT_FOUND = 2011;
+    public static final int DUPLICATE_KEY = 2012;
+    /** 有下级数据（房型/房间/订单）时禁止物理删除，见实施计划 2.6。 */
+    public static final int HAS_CHILDREN = 2013;
+
     public static final int BOOKING_NOT_FOUND = 3001;
     public static final int BOOKING_ILLEGAL_STATE = 3002;
 

@@ -1,0 +1,377 @@
+/* ==========================================================================
+   全局基础样式与 Apple 风格的布局原语
+   ========================================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--bnb-font-family);
+  font-size: var(--bnb-fs-body);
+  line-height: var(--bnb-lh-body);
+  letter-spacing: var(--bnb-ls-body);
+  color: var(--bnb-text-primary);
+  background: var(--bnb-bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color var(--bnb-duration) var(--bnb-ease),
+    color var(--bnb-duration) var(--bnb-ease);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: var(--bnb-ls-title);
+  line-height: var(--bnb-lh-tight);
+}
+
+h1 {
+  font-size: var(--bnb-fs-title1);
+}
+h2 {
+  font-size: var(--bnb-fs-title2);
+}
+h3 {
+  font-size: var(--bnb-fs-title3);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--bnb-text-link);
+  text-decoration: none;
+}
+
+button,
+[role='button'] {
+  font-family: inherit;
+}
+
+/* 可点击的东西必须有指针 —— SKILL.md 的 cursor-pointer 条目 */
+.el-button,
+.el-table__row,
+.bnb-nav__item,
+.bnb-segmented__item,
+.bnb-checkable {
+  cursor: pointer;
+}
+
+/* 键盘可达性：只在键盘导航时显形，鼠标点击不闪框 */
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--bnb-accent) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--bnb-radius-sm);
+}
+
+/* macOS 风格的悬浮滚动条：细、圆、不占位 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bnb-fill-secondary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 980px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bnb-text-tertiary);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- 布局原语 ---------- */
+
+.bnb-page {
+  max-width: var(--bnb-content-max);   /* 全站统一容器宽度 */
+  margin: 0 auto;
+  padding: var(--bnb-space-8) var(--bnb-space-6) var(--bnb-space-12);
+}
+
+.bnb-page__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--bnb-space-4);
+  margin-bottom: var(--bnb-space-6);
+  flex-wrap: wrap;
+}
+
+.bnb-page__title {
+  font-size: var(--bnb-fs-large);
+  font-weight: 600;
+  letter-spacing: var(--bnb-ls-display);
+  line-height: var(--bnb-lh-tight);
+}
+
+.bnb-page__sub {
+  margin-top: var(--bnb-space-1);
+  font-size: var(--bnb-fs-subheadline);
+  color: var(--bnb-text-secondary);
+}
+
+/* 卡片：Apple 的分组列表卡 —— 靠底色差分层，阴影极轻 */
+.bnb-card {
+  background: var(--bnb-bg-card);
+  border-radius: var(--bnb-radius-lg);
+  box-shadow: var(--bnb-shadow-card);
+  border: 1px solid var(--bnb-hairline);
+  overflow: hidden;
+}
+
+.bnb-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bnb-space-3);
+  padding: var(--bnb-space-5) var(--bnb-space-6);
+  border-bottom: 1px solid var(--bnb-separator);
+}
+
+.bnb-card__title {
+  font-size: var(--bnb-fs-body);
+  font-weight: 600;
+}
+
+.bnb-card__body {
+  padding: var(--bnb-space-6);
+}
+
+.bnb-grid {
+  display: grid;
+  gap: var(--bnb-space-4);
+}
+
+.bnb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--bnb-space-3);
+  flex-wrap: wrap;
+}
+
+/* iOS 设置里的分段控件 */
+.bnb-segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bnb-fill-secondary);
+  border-radius: var(--bnb-radius-sm);
+}
+
+.bnb-segmented__item {
+  padding: 5px 12px;
+  font-size: var(--bnb-fs-callout);
+  font-weight: 500;
+  color: var(--bnb-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  transition: background-color var(--bnb-duration-fast) var(--bnb-ease),
+    color var(--bnb-duration-fast) var(--bnb-ease);
+}
+
+.bnb-segmented__item.is-active {
+  background: var(--bnb-bg-card);
+  color: var(--bnb-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 状态胶囊 */
+.bnb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: var(--bnb-fs-footnote);
+  font-weight: 500;
+  line-height: 1.5;
+  border-radius: var(--bnb-radius-pill);
+  background: var(--bnb-fill-secondary);
+  color: var(--bnb-text-secondary);
+}
+
+.bnb-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.bnb-pill--accent {
+  background: var(--bnb-accent-soft);
+  color: var(--bnb-accent);
+}
+.bnb-pill--success {
+  background: var(--bnb-success-soft);
+  color: var(--bnb-success);
+}
+.bnb-pill--warning {
+  background: var(--bnb-warning-soft);
+  color: var(--bnb-warning);
+}
+.bnb-pill--danger {
+  background: var(--bnb-danger-soft);
+  color: var(--bnb-danger);
+}
+
+.bnb-stat__label {
+  font-size: var(--bnb-fs-callout);
+  color: var(--bnb-text-secondary);
+}
+
+.bnb-stat__value {
+  margin-top: 2px;
+  font-size: var(--bnb-fs-large);
+  font-weight: 600;
+  letter-spacing: var(--bnb-ls-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.bnb-muted {
+  color: var(--bnb-text-secondary);
+}
+
+.bnb-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 对 Element Plus 的 Apple 化微调 ---------- */
+
+.el-button {
+  font-weight: 500;
+  letter-spacing: var(--bnb-ls-body);
+  transition: background-color var(--bnb-duration-fast) var(--bnb-ease),
+    border-color var(--bnb-duration-fast) var(--bnb-ease),
+    color var(--bnb-duration-fast) var(--bnb-ease);
+}
+
+/* hover 只换色，不做 scale —— 避免 SKILL.md 点名的"悬停导致布局位移" */
+.el-button--primary {
+  background: var(--bnb-accent);
+  border-color: var(--bnb-accent);
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: var(--bnb-accent-hover);
+  border-color: var(--bnb-accent-hover);
+}
+.el-button--primary:active {
+  background: var(--bnb-accent-active);
+  border-color: var(--bnb-accent-active);
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: var(--bnb-radius-sm) !important;
+  background: var(--bnb-bg-inset);
+  box-shadow: 0 0 0 1px var(--bnb-separator) inset !important;
+  transition: box-shadow var(--bnb-duration-fast) var(--bnb-ease);
+}
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 3px var(--bnb-accent-soft) inset,
+    0 0 0 1px var(--bnb-accent) inset !important;
+}
+
+.el-card,
+.el-dialog,
+.el-drawer {
+  border-radius: var(--bnb-radius-lg) !important;
+}
+
+.el-dialog {
+  --el-dialog-padding-primary: var(--bnb-space-6);
+}
+
+.el-table {
+  --el-table-border-color: var(--bnb-separator);
+  --el-table-header-bg-color: transparent;
+  --el-table-row-hover-bg-color: var(--bnb-fill-tertiary);
+  background: transparent;
+  font-size: var(--bnb-fs-subheadline);
+}
+
+.el-table th.el-table__cell {
+  font-size: var(--bnb-fs-callout);
+  font-weight: 600;
+  color: var(--bnb-text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.el-table .cell {
+  line-height: 1.55;
+}
+
+.el-table__inner-wrapper::before {
+  display: none; /* 去掉表头下那条 2px 实线，Apple 用留白分隔 */
+}
+
+.el-tag {
+  border-radius: var(--bnb-radius-pill);
+  font-weight: 500;
+}
+
+.el-pagination {
+  --el-pagination-font-size: var(--bnb-fs-callout);
+  justify-content: flex-end;
+  margin-top: var(--bnb-space-4);
+}
+
+.el-empty__description {
+  color: var(--bnb-text-secondary);
+}
+
+/* 毛玻璃浮层（下拉、消息条） */
+.el-popper,
+.el-message {
+  border-radius: var(--bnb-radius-md) !important;
+  backdrop-filter: var(--bnb-material-blur);
+}
+
+.el-message {
+  box-shadow: var(--bnb-shadow-pop) !important;
+  border: 1px solid var(--bnb-separator) !important;
+}
+
+/* ---------- 动效可访问性 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- 响应式：窄屏收留白，表格横向滚动 ---------- */
+@media (max-width: 768px) {
+  .bnb-page {
+    padding: var(--bnb-space-5) var(--bnb-space-4) var(--bnb-space-10);
+  }
+  .bnb-page__title {
+    font-size: var(--bnb-fs-title1);
+  }
+  .bnb-card__body {
+    padding: var(--bnb-space-4);
+  }
+}
