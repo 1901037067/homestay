@@ -3,6 +3,7 @@ package com.school.bnb.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.school.bnb.booking.BookingKernel;
+import com.school.bnb.billing.PricingFrames;
 import com.school.bnb.booking.SaleType;
 import com.school.bnb.booking.SellPolicy;
 import com.school.bnb.common.BizException;
@@ -91,6 +92,11 @@ public class BookingService {
                 req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes(),
                 status, holdExpire, req.requestId(), type.name()));
+        // 计费基准在下单时就冻结：结算时再读 room_type 的话，"下单后改房型"会改掉一张旧单的金额
+        PricingFrames.Frames frames = PricingFrames.of(type, ctx.type(), req.startTime());
+        bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(), frames.chargeUnitMinutes());
+        b.setCoveredMinutes(frames.coveredMinutes());
+        b.setChargeUnitMinutes(frames.chargeUnitMinutes());
         opLog.record("BOOKING_CREATE", "booking", b.getId(),
                 String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
                         b.getStartTime(), b.getEndTime(), b.getStatus()),

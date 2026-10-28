@@ -207,6 +207,26 @@ class RoomCatalogIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("房间还有未完成订单时不许下架/维修 —— 否则留下一堆永远办不了入住单")
+    void cannotTakeRoomOfflineWhileBookingsAreLive() {
+        PropertyVO p = newProperty();
+        Room room = roomService.save(new RoomReq(null, p.id(), newRoomType(p.id(), 0).id(), "903", 1, null));
+        Booking b = kernel.createBooking(new CreateBookingCmd(room.getId(), "客人", null,
+                LocalDateTime.now().plusDays(1).withHour(10),
+                LocalDateTime.now().plusDays(1).withHour(12),
+                0, 0, Booking.CONFIRMED, null, null, "HOURLY"));
+
+        assertThatThrownBy(() -> roomService.changeStatus(room.getId(), "OFFLINE"))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.HAS_CHILDREN);
+
+        kernel.cancel(b.getId());
+        roomService.changeStatus(room.getId(), "OFFLINE");
+        assertThat(roomService.require(room.getId()).getStatus()).isEqualTo("OFFLINE");
+    }
+
+    @Test
     @DisplayName("营业日切割点只收整点：06:30 会被拒")
     void dayCutTimeMustBeWholeHour() {
         // 带分钟的切割点会让"归哪一天"按分钟算、"画在第几格"按整点算，两处对不上。

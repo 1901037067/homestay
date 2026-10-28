@@ -7,6 +7,7 @@ import com.school.bnb.booking.BookingStateMachine;
 import com.school.bnb.booking.SaleType;
 import com.school.bnb.booking.SellPolicy;
 import com.school.bnb.billing.PriceCalculator;
+import com.school.bnb.billing.PricingFrames;
 import com.school.bnb.billing.RateRuleDef;
 import com.school.bnb.common.AuthContext;
 import com.school.bnb.common.BizException;
@@ -202,11 +203,12 @@ public class BillingService {
                     "订单当前 " + b.getStatus() + " —— 没入住过的单不产生房费，无需计费");
         }
         RoomType type = d.type();
-        int covered = coveredMinutes(b, type);
-        // 粒度是房型上的配置，脏值（null / 0 / 负）兜回 60 而不是抛错：
-        // 历史房型数据可能没有这一列，报价功能不该因为一个配置空值整个挂掉
-        int unit = type.getChargeUnitMinutes() == null || type.getChargeUnitMinutes() < 1
-                ? 60 : type.getChargeUnitMinutes();
+        // 优先用下单时冻结的基准；历史订单没有快照（V7 之前）才现算，行为与升级前一致。
+        // 这一条是审阅指出的漂移风险：14:00→次日12:00 的全日单，若把模板改成 14:00→次日10:00，
+        // 结算时起步覆盖从 22 小时变 20 小时，凭空多出两小时超时费
+        PricingFrames.Frames frames = PricingFrames.of(parseSale(b), type, b.getStartTime());
+        int covered = b.getCoveredMinutes() == null ? frames.coveredMinutes() : b.getCoveredMinutes();
+        int unit = b.getChargeUnitMinutes() == null ? frames.chargeUnitMinutes() : b.getChargeUnitMinutes();
         LocalDateTime calcEnd = calcEnd(b);
         List<RateRuleDef> rules = rateRuleService.enabledRules(d.room().getPropertyId(),
                 d.room().getRoomTypeId());
@@ -217,21 +219,8 @@ public class BillingService {
         return new Plan(d, covered, unit, b.getStartTime(), calcEnd, q);
     }
 
-    /**
-     * 起步价覆盖多久。
-     *
-     * <p>钟点房是 {@code min_hours}；全日房是<b>房型模板的时长</b>（14:00→次日 12:00 即 22 小时）——
-     * 全日房的 base_price 买的正是这一整段，只有加时那部分才该按超时单价收。
-     * 模板区间复用 {@link SellPolicy#fullDayRange}：下单校验与计费必须是同一个算法，
-     * 两处各写一遍"end 小于 start 就算次日"迟早分叉。
-     */
-    private static int coveredMinutes(Booking b, RoomType type) {
-        if (SaleType.FULL_DAY.name().equals(b.getSaleType())) {
-            LocalDateTime[] tpl = SellPolicy.fullDayRange(
-                    b.getStartTime().toLocalDate(), type.getFullDayStart(), type.getFullDayEnd());
-            return (int) Duration.between(tpl[0], tpl[1]).toMinutes();
-        }
-        return type.getMinHours() * 60;
+    private static SaleType parseSale(Booking b) {
+        return SaleType.FULL_DAY.name().equals(b.getSaleType()) ? SaleType.FULL_DAY : SaleType.HOURLY;
     }
 
     /**

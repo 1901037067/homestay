@@ -398,6 +398,74 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         });
     }
 
+    @Test
+    @DisplayName("⑬ 晚退房把清扫挤进下一单时段时，清扫窗口要截断，不能造出重叠行")
+    void lateCheckOutClipsTheCleaningWindow() {
+        Room r = room(1, 0, 30);
+        // 顺序：B 先订好，再让 A 入住 —— 否则 A 一变成"超时在住"，连创建 B 都会被开单闸门挡住
+        BookingVO b = book(r.getId(), TODAY.withHour(12).plusMinutes(30), TODAY.withHour(14), "HOURLY", null);
+        BookingVO a = book(r.getId(), TODAY.withHour(9), TODAY.withHour(12), "HOURLY", null);
+        kernel.checkIn(a.id(), TODAY.withHour(9));
+
+        // 12:00 的单拖到 12:15 才退；清扫 30 分钟会压到 12:30 开始的下一单头上
+        kernel.checkOut(a.id(), TODAY.withHour(12).plusMinutes(15), 30);
+
+        LocalDateTime cleanEnd = jdbc.queryForObject(
+                "select block_end from occupancy where booking_id = ? and kind = 'CLEANING'",
+                LocalDateTime.class, a.id());
+        assertThat(cleanEnd).as("清扫窗口截断在下一段占用开始之前")
+                .isEqualTo(TODAY.withHour(12).withMinute(30));
+        assertThat(overlappingRows(r.getId())).as("行不重叠是全项目的前提").isZero();
+    }
+
+    @Test
+    @DisplayName("⑭ 下一单已经开始时，清扫窗口被挤没：不造重叠行，也不假装可售")
+    void cleaningWindowCanBeSqueezedToNothing() {
+        // 房型退房缓冲设 0，A 的占用才止于 12:00，下一单才能紧跟着 12:00 开（两行不重叠）
+        Room r = room(2, 0, 0);
+        book(r.getId(), TODAY.withHour(12), TODAY.withHour(14), "HOURLY", null);
+        BookingVO a = book(r.getId(), TODAY.withHour(9), TODAY.withHour(12), "HOURLY", null);
+        kernel.checkIn(a.id(), TODAY.withHour(9));
+
+        kernel.checkOut(a.id(), TODAY.withHour(12).plusMinutes(10), 30);   // 下一单 12:00 就开始了
+
+        assertThat(rowsOfKind(r.getId(), "CLEANING")).as("挤没了就不该插行").isZero();
+        assertThat(overlappingRows(r.getId())).isZero();
+    }
+
+    @Test
+    @DisplayName("⑮ 内核下单时用锁内的最新房间状态复核 —— 锁外判过一次不算数")
+    void createRechecksRoomStatusUnderLock() {
+        Room r = room(2, 0, 0);
+        jdbc.update("update room set status = 'MAINTENANCE' where id = ?", r.getId());
+
+        assertThatThrownBy(() -> kernel.createBooking(new CreateBookingCmd(r.getId(), "客人", null,
+                TODAY.withHour(10), TODAY.withHour(12), 0, 0, Booking.CONFIRMED, null, null, "HOURLY")))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
+    }
+
+    @Test
+    @DisplayName("⑯ 提前入住有上限：超过 24 小时视为误操作")
+    void earlyCheckInHasAnUpperBound() {
+        Room r = room(2, 0, 0);
+        BookingVO far = book(r.getId(), TODAY.plusDays(3).withHour(10), TODAY.plusDays(3).withHour(12),
+                "HOURLY", null);
+
+        assertThatThrownBy(() -> kernel.checkIn(far.id(), TODAY.withHour(10)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("提前三天入住会把房间从现在起一路占住，几乎必然是误操作")
+                .isEqualTo(ErrorCode.BOOKING_ILLEGAL_STATE);
+
+        // 提前一小时是正常场景，必须放行
+        BookingVO near = book(r.getId(), TODAY.plusDays(1).withHour(10), TODAY.plusDays(1).withHour(12),
+                "HOURLY", null);
+        assertThat(kernel.checkIn(near.id(), TODAY.plusDays(1).withHour(9)).getStatus())
+                .isEqualTo(Booking.IN_USE);
+    }
+
     // -------------------------- ⑧ 待清扫是确认式闸门，不是固定时段（第三轮审阅第 2 条）
     @Test
     @DisplayName("⑧ 没点「清扫完成」就一直挡房，预计时长过去也不例外；可售查询同口径")

@@ -78,6 +78,16 @@ public interface BookingMapper extends BaseMapper<Booking> {
                       @Param("expectedEnd") LocalDateTime expectedEnd);
 
     /**
+     * 下单时把计费基准冻结到订单上。单独一条 update 而不是塞进 insert：
+     * 这两个值来自房型（service 层才拿得到），而 insert 在内核里。
+     */
+    @Update("""
+            update booking set covered_minutes = #{covered}, charge_unit_minutes = #{unit}
+            where id = #{id}
+            """)
+    int snapshotPricing(@Param("id") Long id, @Param("covered") int covered, @Param("unit") int unit);
+
+    /**
      * 结算。<b>把金额和状态在同一条 update 里写完</b>，不留"状态改了、钱还没落"的中间态；
      * 状态条件写在 where 里，重复点结算的第二次返回 0。
      */

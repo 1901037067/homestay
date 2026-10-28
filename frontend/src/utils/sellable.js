@@ -45,6 +45,15 @@ export function cellIsSellable(room, from, openTime, closeTime, now = new Date()
   // 可售窗口约束的是"入住时刻"，与后端的 SellPolicy 一致
   if (t < openTime.slice(0, 5) || t > closeTime.slice(0, 5)) return false
 
+  // 光看入住时刻会画出"点了必然被拒"的格子：20:00 起、默认卖 3 小时就是 23:00，
+  // 而可售窗口 22:00 就关了 —— 后端会以"结束超出窗口"拒掉。所以结束端也要先过一遍。
+  // 用 max(3, minHours) 是因为开单弹窗默认就填 3 小时，取两者较大值才是"点进去会拿到的那张单"
+  const hours = Math.max(3, room.minHours || 0)
+  const end = addMinutes(from, hours * 60)
+  if (end.toDateString() !== from.toDateString()) return false          // 钟点不许跨天
+  const endClock = `${pad(end.getHours())}:${pad(end.getMinutes())}`
+  if (endClock > closeTime.slice(0, 5)) return false
+
   // 新单自己的缓冲也要算进来：只比 from/to 会漏判
   // （已有块到 12:45、新单 13:00 入住、入住前缓冲 30 分钟 → 新 block 从 12:30 起，真冲突）
   const effStart = addMinutes(from, -(room.cleanBeforeMinutes || 0))

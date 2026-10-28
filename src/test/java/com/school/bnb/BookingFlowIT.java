@@ -88,9 +88,9 @@ class BookingFlowIT extends AbstractMysqlIT {
         assertThat(occupancyCount(room.getId())).isEqualTo(1);
 
         assertThat(bookingService.confirm(held.id()).status()).isEqualTo(Booking.CONFIRMED);
-        BookingVO inUse = bookingService.checkIn(held.id());
-        assertThat(inUse.status()).isEqualTo(Booking.IN_USE);
-        assertThat(inUse.actualCheckIn()).isNotNull();
+        Booking inUse = kernel.checkIn(held.id(), held.startTime());
+        assertThat(inUse.getStatus()).isEqualTo(Booking.IN_USE);
+        assertThat(inUse.getActualCheckIn()).isNotNull();
 
         BookingVO out = bookingService.checkOut(held.id());
         assertThat(out.status()).isEqualTo(Booking.CHECKED_OUT);
@@ -115,10 +115,10 @@ class BookingFlowIT extends AbstractMysqlIT {
                     assertThat(e.getMessage()).contains("IN_USE");
                 });
 
-        BookingVO inUse = bookingService.checkIn(b.id());
-        assertThatThrownBy(() -> bookingService.checkIn(inUse.id())).isInstanceOf(BizException.class);
+        Booking inUse = kernel.checkIn(b.id(), b.startTime());
+        assertThatThrownBy(() -> kernel.checkIn(inUse.getId(), inUse.getStartTime())).isInstanceOf(BizException.class);
         // IN_USE 不能取消，要先退房
-        assertThatThrownBy(() -> bookingService.cancel(inUse.id()))
+        assertThatThrownBy(() -> bookingService.cancel(inUse.getId()))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.BOOKING_ILLEGAL_STATE);
@@ -185,7 +185,7 @@ class BookingFlowIT extends AbstractMysqlIT {
     void extend() {
         Room room = plainRoom();
         BookingVO a = bookingService.create(req(room.getId(), DAY.withHour(14), DAY.withHour(18)));
-        bookingService.checkIn(a.id());
+        kernel.checkIn(a.id(), a.startTime());
 
         BookingVO extended = bookingService.extend(a.id(), new ExtendReq(DAY.withHour(20)));
         assertThat(extended.endTime()).isEqualTo(DAY.withHour(20));
@@ -206,7 +206,7 @@ class BookingFlowIT extends AbstractMysqlIT {
     void extendRespectsSaleWindow() {
         Room room = plainRoom();
         BookingVO a = bookingService.create(req(room.getId(), DAY.withHour(14), DAY.withHour(18)));
-        bookingService.checkIn(a.id());
+        kernel.checkIn(a.id(), a.startTime());
 
         assertThatThrownBy(() -> bookingService.extend(a.id(), new ExtendReq(DAY.withHour(23))))
                 .isInstanceOf(BizException.class)

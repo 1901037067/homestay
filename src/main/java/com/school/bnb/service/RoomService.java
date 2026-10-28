@@ -122,8 +122,25 @@ public class RoomService {
         if (!STATUSES.contains(status)) {
             throw new BizException(ErrorCode.BAD_REQUEST, "状态不合法: " + status);
         }
-        Room r = require(id);
+        // 先锁房间再改：不锁的话"下架"与"开单"可以交错 —— 单子按加锁前的 ON_SALE 过了校验，
+        // 房间随后被下架，于是这张单永远办不了入住，房间还被"占"着
+        Room r = roomMapper.selectForUpdate(id);
+        if (r == null) {
+            throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + id);
+        }
         String from = r.getStatus();
+        if (!from.equals(status) && (Room.OFFLINE.equals(status) || Room.MAINTENANCE.equals(status))) {
+            long live = bookingMapper.selectCount(new LambdaQueryWrapper<Booking>()
+                    .eq(Booking::getRoomId, id)
+                    .in(Booking::getStatus, Booking.HELD, Booking.CONFIRMED, Booking.IN_USE));
+            if (live > 0) {
+                // 下架/维修是"这间房暂时不能卖"，但已经卖出去的单子必须有着落：
+                // 先取消或改期，再下架。否则会留下一堆永远办不了入住的 CONFIRMED 单
+                throw new BizException(ErrorCode.HAS_CHILDREN,
+                        "该房间还有 " + live + " 条未完成订单（在住/已确认/预占），"
+                                + "请先取消或改期，再改为 " + status);
+            }
+        }
         r.setStatus(status);
         roomMapper.updateById(r);
         opLog.record("ROOM_STATUS", "room", id, r.getRoomNo() + " 状态 " + from + " → " + status, from, status);

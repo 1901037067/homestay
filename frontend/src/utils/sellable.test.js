@@ -66,6 +66,15 @@ describe('cellIsSellable：格子能不能点', () => {
     expect(cellIsSellable(room([]), at('2026-12-01T23:00:00'), open, close)).toBe(false)
   })
 
+  it('结束时刻也要落在窗口内：20:00 起默认卖 3 小时就撞上 22:00 关窗', () => {
+    // 修复前只校验入住时刻 → 20:00 的格子可点，提交后被后端拒（"结束超出窗口"）
+    expect(cellIsSellable(room([]), at('2026-12-01T20:00:00'), open, close)).toBe(false)
+    // 19:00 起 3 小时正好 22:00，落在窗口内（半开区间，等于关窗时刻仍可）
+    expect(cellIsSellable(room([]), at('2026-12-01T19:00:00'), open, close)).toBe(true)
+    // 起步 6 小时的房型：17:00 起 6 小时 = 23:00，同样超窗
+    expect(cellIsSellable(room([], { minHours: 6 }), at('2026-12-01T17:00:00'), open, close)).toBe(false)
+  })
+
   it('新单自己的入住前缓冲也要算进来', () => {
     // 已有块到 12:45；13:00 入住 + 30 分钟入住前缓冲 → 12:30 起就撞上了
     const blocks = [block('ROOM', 'CONFIRMED', '2026-12-01T10:00:00', '2026-12-01T12:45:00')]

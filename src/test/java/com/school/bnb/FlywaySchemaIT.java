@@ -19,17 +19,20 @@ class FlywaySchemaIT extends AbstractMysqlIT {
     private JdbcTemplate jdbc;
 
     @Test
-    @DisplayName("八张表全部建成，且都是 InnoDB + utf8mb4")
+    @DisplayName("九张表全部建成，且都是 InnoDB + utf8mb4")
     void tablesCreatedWithRightEngineAndCharset() {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select table_name, engine, table_collation
                 from information_schema.tables
                 where table_schema = database()
+                  and table_name <> 'flyway_schema_history'   -- Flyway 自己的账本，不是业务表
                 """);
 
+        // 用"精确集合"而不是 contains：contains 只保证"至少这些"，operation_log 整张表被删了
+        // 也照样绿 —— 结构契约一旦允许缺项，它就不再是契约
         assertThat(rows).extracting(r -> ((String) r.get("table_name")).toLowerCase())
-                .contains("sys_user", "property", "room_type", "room", "booking", "occupancy",
-                        "rate_rule", "bill");
+                .containsExactlyInAnyOrder("sys_user", "property", "room_type", "room", "booking",
+                        "occupancy", "rate_rule", "bill", "operation_log");
 
         assertThat(rows).allSatisfy(r -> {
             assertThat((String) r.get("engine")).isEqualTo("InnoDB");
@@ -61,7 +64,8 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 where constraint_schema = database()
                 """, String.class);
 
-        assertThat(fks).contains(
+        // 同样精确比：漏一个外键（比如 fk_rule_type）不该因为"其它都还在"而绿
+        assertThat(fks).containsExactlyInAnyOrder(
                 "fk_type_property",
                 "fk_room_property",
                 "fk_room_type",
@@ -69,6 +73,7 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 "fk_occ_room",
                 "fk_occ_booking",
                 "fk_rule_property",
+                "fk_rule_type",
                 "fk_bill_booking");
     }
 
@@ -99,6 +104,20 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 """, String.class);
 
         assertThat(cols).containsExactly("room_id", "block_start", "block_end");
+    }
+
+    @Test
+    @DisplayName("LocalDateTime 经 JDBC 真正写入再读回，不发生时区位移")
+    void localDateTimeSurvivesARealRoundTrip() {
+        // 之前的版本只比对了 SQL 字面量与服务器偏移，没走驱动的绑定/取回路径 ——
+        // 而 preserveInstants=false 这类参数影响的恰恰是那条路径。这里真的插一行再读回来
+        jdbc.execute("create temporary table tz_probe (id int primary key, at datetime not null)");
+        java.time.LocalDateTime written = java.time.LocalDateTime.of(2026, 11, 5, 23, 30, 15);
+        jdbc.update("insert into tz_probe (id, at) values (?, ?)", 1, written);
+
+        java.time.LocalDateTime read = jdbc.queryForObject(
+                "select at from tz_probe where id = 1", java.time.LocalDateTime.class);
+        assertThat(read).as("跨零点时刻写进去再读出来必须一模一样").isEqualTo(written);
     }
 
     @Test

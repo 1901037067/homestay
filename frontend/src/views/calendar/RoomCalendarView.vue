@@ -113,12 +113,14 @@
         <el-form-item label="方式">
           <div class="bnb-segmented" role="group" aria-label="开单方式">
             <button
+              type="button"
               class="bnb-segmented__item"
               :class="{ 'is-active': form.mode === 'hourly' }"
               @click="setMode('hourly')"
             >按小时</button>
             <button
               v-if="form.room?.fullDayStart"
+              type="button"
               class="bnb-segmented__item"
               :class="{ 'is-active': form.mode === 'fullday' }"
               @click="setMode('fullday')"
@@ -130,6 +132,7 @@
           <el-form-item label="开始">
             <el-time-select
               v-model="form.start"
+              :clearable="false"
               start="00:00"
               step="01:00"
               end="23:00"
@@ -231,7 +234,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Refresh } from '@element-plus/icons-vue'
 import http from '../../api'
 import BillDialog from '../../components/BillDialog.vue'
@@ -369,7 +372,11 @@ const previewEnd = computed(() => {
     const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, eh, em)
     return { start, end }
   }
+  // 开始时间理论上不可清空（选择器关掉了 clearable），但这里仍然兜一层：
+  // 清空后 split 会抛错，整页白屏 —— 一个输入框不该能把房态图打没
+  if (!form.start) return null
   const [h, m] = form.start.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return null
   const start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m)
   // 开始时刻在切割点之前，说明它属于窗口里的"次日"那半段
   if (h < dayCutHour.value) start.setDate(start.getDate() + 1)
@@ -473,6 +480,18 @@ async function run(a) {
   if (a.cmd === 'settle') {
     await doSettle()
     return
+  }
+  // 取消/退房都会改变占用与账目，点错没有撤销：加一道确认
+  if (a.cmd === 'cancel' || a.cmd === 'check-out') {
+    try {
+      await ElMessageBox.confirm(
+        a.cmd === 'cancel' ? '取消这张订单？房源会立即释放。' : '确认给客人办退房？',
+        '确认' + a.label,
+        { type: 'warning', confirmButtonText: a.label, cancelButtonText: '再想想' }
+      )
+    } catch {
+      return
+    }
   }
   submitting.value = true
   try {
@@ -585,7 +604,11 @@ function shiftDay(delta) {
 }
 
 function goToday() {
+  // 按营业日算，不是按自然日：01:00 且切割点 06:00 时，"今天"这张图覆盖的是
+  // [今天 06:00, 明天 06:00)，此刻的住客（昨天的单）会从图上消失。归属规则与后端一致：
+  // 营业日 = 当前时刻往前推切割点后取日期
   const d = new Date()
+  if (d.getHours() < dayCutHour.value) d.setDate(d.getDate() - 1)
   date.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   load()
 }

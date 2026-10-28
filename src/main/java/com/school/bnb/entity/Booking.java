@@ -40,6 +40,10 @@ public class Booking {
     private String status;
     private LocalDateTime holdExpireAt;
     private BigDecimal amount;
+
+    /** 下单时快照的起步覆盖时长与计费粒度 —— 结算据此算账，不再读"现在"的房型配置。 */
+    private Integer coveredMinutes;
+    private Integer chargeUnitMinutes;
     private String remark;
     private Long createdBy;
     private LocalDateTime createdAt;

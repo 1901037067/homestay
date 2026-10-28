@@ -178,28 +178,32 @@ class BillingIT extends AbstractMysqlIT {
     }
 
     @Test
-    @DisplayName("计费粒度是配置项：同一张单，粒度 30 比粒度 60 收得少")
-    void chargeUnitIsConfigurable() throws Exception {
+    @DisplayName("计费粒度是配置项，但只对之后新开的单生效（旧单已快照）")
+    void chargeUnitIsConfigurableButFrozenPerBooking() throws Exception {
         MockHttpSession session = login();
-        // 起步 3 小时；9:00–12:20 的超时正好是 20 分钟，最能见出粒度差异
-        Room room = room("100.00", 3, "20.00", 60);
-        long id = booking(session, room, 9, 12, 20);
+        // 起步 3 小时；9:00–12:20 的超时是 20 分钟，最能见出粒度差异
+        Room coarse = room("100.00", 3, "20.00", 60);
+        long oldId = booking(session, coarse, 9, 12, 20);
+        assertThat(total(session, oldId)).as("粒度 60：不足一小时按一小时 → 100 + 20")
+                .isEqualByComparingTo("120.00");
 
-        // 粒度 60：不足一小时按一小时 → 100 + 20
-        assertThat(json(post("/api/bookings/" + id + "/bill/preview").session(session))
-                .path("data").path("totalAmount").decimalValue()).isEqualByComparingTo("120.00");
-
-        Long typeId = room.getRoomTypeId();
+        // 把粒度改成 30，再新开一间同房型的房
+        Long typeId = coarse.getRoomTypeId();
         var type = roomTypeService.require(typeId);
         roomTypeService.save(new RoomTypeReq(typeId, type.getPropertyId(), type.getName(),
                 type.getBasePrice(), type.getMinHours(), type.getExtraHourPrice(), 30,
                 type.getCleanBeforeMinutes(), type.getCleanAfterMinutes(),
                 type.getFullDayStart(), type.getFullDayEnd()));
+        Room fine = roomService.save(new RoomReq(null, type.getPropertyId(), typeId,
+                "R-" + System.nanoTime(), 1, Room.ON_SALE));
+        long newId = booking(session, fine, 9, 12, 20);
 
-        // 粒度 30：20 分钟按半小时收 → 100 + 10
-        JsonNode fine = json(post("/api/bookings/" + id + "/bill/preview").session(session)).path("data");
-        assertThat(fine.path("chargeUnitMinutes").asInt()).isEqualTo(30);
-        assertThat(fine.path("totalAmount").decimalValue()).isEqualByComparingTo("110.00");
+        JsonNode fineBill = json(post("/api/bookings/" + newId + "/bill/preview").session(session)).path("data");
+        assertThat(fineBill.path("chargeUnitMinutes").asInt()).isEqualTo(30);
+        assertThat(fineBill.path("totalAmount").decimalValue())
+                .as("粒度 30：20 分钟按半小时收 → 100 + 10").isEqualByComparingTo("110.00");
+        // 旧单不受影响：它在下单时就把粒度快照成 60 了
+        assertThat(total(session, oldId)).isEqualByComparingTo("120.00");
     }
 
     @Test
@@ -327,6 +331,29 @@ class BillingIT extends AbstractMysqlIT {
         assertThat(after.weekdays()).as("星期限制要真的清掉").isEmpty();
         // 页面提示"已保存"而库里没变，是这个 bug 最难发现的地方 —— 所以要用钱来验，不是用提示来验
         assertThat(total(session, id)).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    @DisplayName("下单后改房型配置，未结算旧单金额不变（计费基准在下单时已快照）")
+    void pricingFramesAreFrozenAtBookingTime() throws Exception {
+        MockHttpSession session = login();
+        Room room = room("100.00", 2, "20.00", 60);       // 起步 2 小时
+        long id = booking(session, room, 9, 12);          // 3 小时 → 100 + 1h×20 = 120
+        assertThat(total(session, id)).isEqualByComparingTo("120.00");
+
+        // 把起步时长改成 3 小时。若结算时才读房型，超时段就没了，只剩 100 —— 旧单金额被悄悄改小
+        Long typeId = room.getRoomTypeId();
+        var type = roomTypeService.require(typeId);
+        roomTypeService.save(new RoomTypeReq(typeId, type.getPropertyId(), type.getName(),
+                type.getBasePrice(), 3, type.getExtraHourPrice(), type.getChargeUnitMinutes(),
+                type.getCleanBeforeMinutes(), type.getCleanAfterMinutes(),
+                type.getFullDayStart(), type.getFullDayEnd()));
+
+        assertThat(total(session, id)).as("试算按快照的 2 小时起步").isEqualByComparingTo("120.00");
+        checkOutAt(session, id, DAY.withHour(12));
+        assertThat(json(post("/api/bookings/" + id + "/settle").session(session))
+                .path("data").path("totalAmount").decimalValue())
+                .as("结算也按快照").isEqualByComparingTo("120.00");
     }
 
     // ------------------------------------------------------------------ 夹具

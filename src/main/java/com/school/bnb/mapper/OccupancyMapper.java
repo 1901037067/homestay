@@ -69,6 +69,23 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
     @Delete("delete from occupancy where booking_id = #{bookingId}")
     int deleteByBookingId(@Param("bookingId") Long bookingId);
 
+    /**
+     * 退房生成清扫窗口时用：这间房在 {@code after} 之后最早的一段占用从哪开始。
+     *
+     * <p>晚退房会把清扫时间挤进下一单的时段（12:00 的单拖到 12:15 退、下一单 12:30 开），
+     * 若仍按 {@code [12:15, 12:45]} 插清扫行，就和下一单的占用行叠在一起 ——
+     * 破坏"同房间行互不重叠"这条全项目的前提。所以要截断到下一段开始之前。
+     *
+     * <p>判定用 {@code block_end > after} 而不是 {@code block_start > after}：<b>已经开始了、
+     * 还没结束</b>的那一段同样要算进来 —— 它是最危险的情形（客人刚进房，前一位才退），
+     * 按 {@code block_start} 筛会把它跳过，于是清扫行照样压上去。
+     */
+    @Select("""
+            select min(block_start) from occupancy
+            where room_id = #{roomId} and block_end > #{after}
+            """)
+    LocalDateTime findNextBlockStart(@Param("roomId") Long roomId, @Param("after") LocalDateTime after);
+
     /** 清扫完成：按房间收尾，前台点的是"这间房打扫好了"，不关心是哪张单。 */
     @Delete("delete from occupancy where room_id = #{roomId} and kind = 'CLEANING'")
     int deleteCleaningByRoom(@Param("roomId") Long roomId);

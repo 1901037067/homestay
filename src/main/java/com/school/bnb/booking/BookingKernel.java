@@ -12,6 +12,7 @@ import com.school.bnb.mapper.OccupancyMapper;
 import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.vo.HoldCandidate;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -41,6 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class BookingKernel {
 
     private static final AtomicInteger SEQ = new AtomicInteger();
+    /** 提前入住的上限：再早就不算"早到"，算误操作或需要改期。 */
+    private static final Duration EARLY_CHECK_IN_LIMIT = Duration.ofHours(24);
+
     private static final DateTimeFormatter NO_TS = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final RoomMapper roomMapper;
@@ -60,9 +64,16 @@ public class BookingKernel {
         // 内核自己也要兜住非法区间 —— 它是最后一道防线，不能假设调用方校验过
         validateRange(cmd.startTime(), cmd.endTime());
 
-        // 1. 锁住房间行 → 同房间下单天然串行
-        if (roomMapper.selectForUpdate(cmd.roomId()) == null) {
+        // 1. 锁住房间行 → 同房间下单天然串行；同时用锁里的最新行复核状态。
+        //    BookingService 在锁外也判过一次状态（快速失败），但那是加锁前的快照：
+        //    期间若有人把房间改成维修，只靠那次判断就会把房间卖掉、而且这张单永远办不了入住
+        Room locked = roomMapper.selectForUpdate(cmd.roomId());
+        if (locked == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + cmd.roomId());
+        }
+        if (!Room.ON_SALE.equals(locked.getStatus())) {
+            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
+                    "房间 " + locked.getRoomNo() + " 当前状态 " + locked.getStatus() + "，不可售");
         }
 
         // 2. 幂等回放：同一 requestId 重复提交返回原单。放在锁之后，同房间的并发双击必然串行。
@@ -226,6 +237,13 @@ public class BookingKernel {
         // 整段预订都已经过去就没得"入住"了：B 单 10:00–12:00、客人 14:00 才到，
         // 此刻房间里可能已经住着 13:00 开单的 A —— 只按 [10:00, 12:30) 检查是查不出人的。
         // 这条是外部审阅指出、我核对后确认的真实缺陷：闸门的位置对了，但窗口用的是历史值。
+        // 提前入住要有上限：没有上限的话"给三个月后的单办入住"会把房间从现在起一路占住，
+        // 而且这几乎必然是误操作。24 小时足够覆盖真实的"客人早到半天"场景
+        if (at.isBefore(fresh.getStartTime().minus(EARLY_CHECK_IN_LIMIT))) {
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE,
+                    "该预订 " + fresh.getStartTime() + " 才开始，提前入住不能超过 "
+                            + EARLY_CHECK_IN_LIMIT.toHours() + " 小时；如需更早入住请改期");
+        }
         if (!at.isBefore(fresh.getEndTime())) {
             throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE,
                     "该预订时段 " + fresh.getStartTime() + " → " + fresh.getEndTime()
@@ -277,15 +295,29 @@ public class BookingKernel {
         }
         occupancyMapper.deleteByBookingId(bookingId);
         if (cleanAfterMinutes > 0) {
-            Occupancy cleaning = new Occupancy();
-            cleaning.setRoomId(booking.getRoomId());
-            cleaning.setBookingId(bookingId);
-            cleaning.setStartTime(at);
-            cleaning.setEndTime(at.plusMinutes(cleanAfterMinutes));
-            cleaning.setBlockStart(at);
-            cleaning.setBlockEnd(at.plusMinutes(cleanAfterMinutes));
-            cleaning.setKind(Occupancy.KIND_CLEANING);
-            occupancyMapper.insert(cleaning);
+            LocalDateTime cleanEnd = at.plusMinutes(cleanAfterMinutes);
+            // 清扫窗口不能压到下一单头上：晚退房把清扫挤进下一单时段时截断到下一段开始之前。
+            // 不截断就会插出一对重叠的占用行，而"同房间行互不重叠"是冲突检测、日历、报表的共同前提
+            LocalDateTime nextStart = occupancyMapper.findNextBlockStart(booking.getRoomId(), at);
+            if (nextStart != null && nextStart.isBefore(cleanEnd)) {
+                cleanEnd = nextStart;
+            }
+            if (cleanEnd.isAfter(at)) {
+                Occupancy cleaning = new Occupancy();
+                cleaning.setRoomId(booking.getRoomId());
+                cleaning.setBookingId(bookingId);
+                cleaning.setStartTime(at);
+                cleaning.setEndTime(cleanEnd);
+                cleaning.setBlockStart(at);
+                cleaning.setBlockEnd(cleanEnd);
+                cleaning.setKind(Occupancy.KIND_CLEANING);
+                occupancyMapper.insert(cleaning);
+            } else {
+                // 下一段占用已经开始了，清扫窗口被挤没了：不能假装房间已可售，也不能造重叠行，
+                // 只能落一条 warn 让前台按实际情况处理（改房/加急清扫）
+                log.warn("退房晚于下一段占用的开始时刻，清扫窗口被挤没 booking={} 房={} 下一段起于 {}",
+                        booking.getBookingNo(), booking.getRoomId(), nextStart);
+            }
         }
         return require(bookingId);
     }

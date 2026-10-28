@@ -132,7 +132,7 @@ class CalendarIT extends AbstractMysqlIT {
 
         var b2 = bookingService.create(new CreateBookingReq(r.getId(), "李四", null,
                 DAY.atTime(20, 0), DAY.atTime(22, 0), Booking.CONFIRMED, null));
-        bookingService.checkIn(b2.id());
+        kernel.checkIn(b2.id(), b2.startTime());
         bookingService.checkOut(b2.id());
 
         // 清扫块按<b>实际退房时刻</b>落库，而 checkOut 用的是 now() —— 本用例的订单排在 12 月，
@@ -171,7 +171,7 @@ class CalendarIT extends AbstractMysqlIT {
         Room r = room(p.id(), 0);
         var b = bookingService.create(new CreateBookingReq(r.getId(), "王小明", "13800000000",
                 DAY.atTime(9, 0), DAY.atTime(12, 0), Booking.CONFIRMED, null));
-        bookingService.checkIn(b.id());
+        kernel.checkIn(b.id(), b.startTime());
 
         CalendarBlock blk = row(calendarService.calendar(p.id(), DAY), r.getId()).blocks().get(0);
         assertThat(blk.getGuestName()).isEqualTo("王小明");
