@@ -3,7 +3,7 @@
     <div class="bnb-page__head">
       <div>
         <div class="bnb-page__title">概览</div>
-        <div class="bnb-page__sub">房源域已就绪；分时冲突检测与房态日历分别在 W3、W4 接入</div>
+        <div class="bnb-page__sub">房源目录视角。经营数据（出租率/营收/热度）在「报表」页，按营业日切割统计</div>
       </div>
       <el-button :loading="loading" @click="load">
         <el-icon><Refresh /></el-icon>刷新

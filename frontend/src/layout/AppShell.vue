@@ -77,7 +77,8 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document, PriceTag
+  House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document,
+  PriceTag, TrendCharts
 } from '@element-plus/icons-vue'
 import { THEME_MODES, useTheme } from '../composables/useTheme'
 import http from '../api'
@@ -94,6 +95,7 @@ const nav = [
   { path: '/room-types', label: '房型', icon: Ticket, desc: '定价、起步时长与清扫缓冲' },
   { path: '/properties', label: '民宿', icon: House, desc: '门店与营业日切割点' },
   { path: '/rate-rules', label: '价格规则', icon: PriceTag, desc: '按日期、星期、时段覆盖平时价' },
+  { path: '/stats', label: '报表', icon: TrendCharts, desc: '出租率、营收与分时段热度，全部按营业日切割' },
   { path: '/logs', label: '操作日志', icon: Document, desc: '谁在什么时候改了什么' }
 ]
 

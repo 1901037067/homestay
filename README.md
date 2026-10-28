@@ -27,6 +27,7 @@ src/main/java/com/school/bnb
 ├── booking                预订内核 BookingKernel —— 全项目唯一写 occupancy 的入口；
 │                          SellPolicy（可售性唯一出处）/ SaleType / BookingStateMachine
 ├── billing                PriceCalculator —— 纯函数，不碰 DB 也不读时钟；RateRuleDef
+├── stats                  StatsAggregator —— 报表聚合，同样是纯函数（切割/分摊/归属全在这里）
 └── common                 统一返回 / 异常 / session 拦截器 / AuthContext
 src/main/resources/db/migration  V1 结构、V2 结构性种子、V3 幂等与售卖方式、V4 操作日志、V5 计费
 src/test/java/com/school/bnb     防超卖三件套 + 流转/日历/审计/计费 IT；billing/PriceCalculatorTest 纯单测
@@ -39,7 +40,7 @@ frontend/src
 ├── components/BillDialog.vue  账单弹窗（日历与订单列表共用，试算/快照同一套渲染）
 ├── utils/dtime.js         naive 本地时间的解析与格式化（不引 dayjs，避免偏移被算错）
 └── views                  登录 / 概览 / calendar 房态 / booking 订单 / room 三个管理页 /
-                           billing 价格规则 / system 操作日志（全部路由级懒加载）
+                           billing 价格规则 / stats 报表 / system 操作日志（全部路由级懒加载）
 scripts/                   env.sh / env.ps1 / reset-demo.sh
 docker-compose.yml         开发期 MySQL
 ```
@@ -93,7 +94,7 @@ CSS 变量生效，没有覆盖 `.el-*` 类名，组件库升级不会崩。三�
 
 浅色 / 深色 / 跟随系统三档在右上角分段控件，选择存 `localStorage`，`auto` 档跟随系统实时切换。
 
-七个页面：概览 / 房态日历 / 订单 / 房间 / 房型 / 民宿 / 价格规则 / 操作日志。
+九个页面：概览 / 房态日历 / 订单 / 房间 / 房型 / 民宿 / 价格规则 / 报表 / 操作日志。
 两条刻意的设计：
 
 - **房态日历是主操作台**（点空白格开单、点块做入住/退房/加时/结算/清扫确认），
@@ -123,6 +124,8 @@ GET  /api/bookings/{id}/bill      已结算返账单快照，未结算返实时�
 POST /api/bookings/{id}/bill/preview  按当前规则重算，不写库
 POST /api/bookings/{id}/settle        收款：落 bill 快照 + CHECKED_OUT→SETTLED
 GET  /api/rate-rules             ?propertyId=  POST / PUT /{id} / DELETE /{id}  价格规则
+GET  /api/stats/report           ?propertyId&from&to   指标卡 + 日序列 + 热度 + 排行（一次扫描）
+GET  /api/stats/export           ?propertyId&from&to   导出 CSV（UTF-8 BOM，Excel 直接打开）
 GET  /api/operation-logs          ?page&size&action&entity&entityId&username
 ```
 
@@ -257,6 +260,31 @@ W3 落地、W4 之后被一轮审阅修正。改这块代码前先看这段：
 的影响行数才是裁判，赢了自己插 `bill` 行 —— 顺序反过来的话并发双击会靠唯一键报错回滚，
 正确性来自约束冲突而不是来自状态机，错误信息还难看。
 
+## 报表（W7）
+
+全部按**营业日**切割，而且切割这件事只有一处实现：`stats/StatsAggregator` 是纯函数，
+SQL 只做范围扫描。理由和计费一样 —— 归属边界（凌晨算哪天、跨零点摊到哪几格）写在 SQL 里
+每个分支都得连库造数据才能验，写成纯函数就被 17 条用例钉住了。
+
+四条口径：
+
+1. **营业日归属** `bd(t) = date(t - dayCut)`，归的是**入住时刻**所在营业日。
+   一张 14:00→次日 12:00 的全日单整段算入住那天，不会被劈成两天房晚。
+2. **出租率 = 当天卖出去的不同房间数 / 在售房间数**。不用"按小时加权占用率"：
+   钟点房卖 4 小时和三小时房的率没法放进同一个分母解释，而"今天有几间房被卖出去过"
+   是前台和店长都能立刻听懂的话。平均出租率按总房晚加权，不是把每天的率再平均。
+3. **营收只认已结算**（`SETTLED`）。已退房未结算的钱单列 `pendingAmount` —— 混进去就成了"嘴上收了"。
+4. **热度按小时切片**，横轴从切割点起转（06,07,…,05），凌晨 2 点落在第 20 格。
+   页面上留了「从 00:00 起（对照）」开关，一眼能看出错误口径长什么样，论文里可以直接放对比图。
+
+一个接口出三张图：原本按实施计划拆成 overview / hourly-heat / room-ranking 三个接口，
+实现时合成 `GET /api/stats/report` —— 三个接口各扫一遍库，期间有新单进来就会让指标卡与图表互相矛盾，
+答辩时被指着问"这两个数为什么对不上"很致命。一次扫描、一份快照，是把"三个视图同源"变成结构上的保证。
+
+导出是 **CSV + UTF-8 BOM**（Excel 双击直接正确显示中文），不是 .xlsx：为一张一次能装下的表
+引入 Apache POI 要背十几兆依赖，而这份数据的价值在"能贴进论文/发给店长看"，不在格式本身。
+换 xlsx 的改动被收敛在 `StatsService.toCsv` 一个方法里。
+
 ## 测试
 
 ```bash
@@ -276,6 +304,8 @@ mvn -B test
 | `OperationLogIT` | 4 条，走 MockMvc + 真实 session：一次完整流转留下开单/入住/退房三条且都带操作人；前后值确实是两份快照（记同一个引用会让审计白记）；房间上下架留痕；取消留痕。**必须走 HTTP 层** —— `username` 来自登录拦截器写的 `AuthContext`，直接调 service 会一路是 null 而没人发现 |
 | `PriceCalculatorTest` | **34 条纯单测，不起容器、不连库**：14 行表驱动金额表（订满起步 / 短于起步不退 / 超时 61 分钟按两小时 / 同一张单在粒度 60·30·1 下的三种结果 / 周末倍率同时改写起步与超时 / 跨星期边界 / 深夜窗口与 22:00 整的半开区间边界 / 国庆一口价命中与不命中 / 全日房加时 / 倍率产生小数时四舍五入）；结构类（合计恒等于明细之和、连续同价并档、规则切换处必须断成两条、起步价标"打包"免被误当小时价乘）；决胜类（priority、房型级压民宿级、同分按 id 且与传入顺序无关、日期闭区间、跨零点时段、三块条件必须同时满足）。<br>另有一条**基准日期星期自检** —— 第一次写这张表时把 2026-10-08 当成周五（实际周四），正是这条当场把 5 个用例全打红 |
 | `BillingIT` | 10 条，走 MockMvc + 真实 session：试算=结算=明细相加且 `booking.amount` 与 `bill.total_amount` 同源；**改房型价不回溯已结算账单**（同时证明新开一单确实用了新价，不是缓存）；规则命中改写金额且规则名进快照、删规则后快照仍读得出；停用规则不参与计价；粒度 60→30 让同一张单少收 10 元；超时补收与早退不退；只有 CHECKED_OUT 能结算且不能重复结算（账单恒为一行）；取消单试算返 `3007 NOTHING_TO_BILL`；全日房起步覆盖 22 小时、加时才收超时费；**清空规则的日期/星期/房型限制必须真的落库并改变计价**（MyBatis-Plus 默认更新策略会跳过 null 字段） |
+| `StatsAggregatorTest` | **17 条纯单测，不起容器**：营业日归属与横轴旋转的表驱动（含"06:00 前算前一天"与"同一切割点换成 04:00 就归另一天"）；跨零点全日房只算一个房晚但热力摊两个营业日；凌晨单落在轴尾；取消/释放单不计；营收只认已结算而待结算单列；超时/早退计数；出租率按不同房间数算；区间外单不进任何一天（**这条当场抓出排名与热度没按区间过滤的 bug**）；排行次序；平均出租率按加权而非均值 |
+| `StatsIT` | 6 条，走 MockMvc + 真 MySQL：日序列与合计（参数从 SQL 一路到 JSON 都对）、**05:00 的单在真实数据上确实归前一天且查后一天时不出现**、热度横轴旋转（slot 20 / hour 2）、排行只统计区间内、民宿之间隔离、CSV 带 BOM 与合计行 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
 `*IT` 需要 Docker。surefire 已在 pom 里显式收 `**/*IT.java`，否则会出现"构建成功但一条集成测试没跑"的假绿。
