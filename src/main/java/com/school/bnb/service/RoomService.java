@@ -2,6 +2,7 @@ package com.school.bnb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.RoomReq;
@@ -29,19 +30,23 @@ public class RoomService {
     private final BookingMapper bookingMapper;
     private final PropertyService propertyService;
     private final OperationLogService opLog;
+    private final AccessScope scope;
 
     public RoomService(RoomMapper roomMapper, RoomTypeMapper roomTypeMapper,
                        BookingMapper bookingMapper, PropertyService propertyService,
-                       OperationLogService opLog) {
+                       OperationLogService opLog,
+                       AccessScope scope) {
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.bookingMapper = bookingMapper;
         this.propertyService = propertyService;
         this.opLog = opLog;
+        this.scope = scope;
     }
 
     public Page<RoomVO> page(long pageNo, long pageSize, Long propertyId, Long roomTypeId,
                              String status, String keyword) {
+        propertyId = scope.narrow(propertyId);
         LambdaQueryWrapper<Room> q = new LambdaQueryWrapper<Room>()
                 .eq(propertyId != null, Room::getPropertyId, propertyId)
                 .eq(roomTypeId != null, Room::getRoomTypeId, roomTypeId)
@@ -81,6 +86,7 @@ public class RoomService {
         if (!type.getPropertyId().equals(req.propertyId())) {
             throw new BizException(ErrorCode.BAD_REQUEST, "房型不属于所选民宿");
         }
+        scope.requireVisible(req.propertyId());
         // 更新时没给状态就沿用库里的值：否则只改房号的请求会把"维修中"悄悄改成"在售"
         Room before = req.id() == null ? null : require(req.id());
         String status = req.status() == null || req.status().isBlank()
@@ -131,6 +137,7 @@ public class RoomService {
         if (r == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + id);
         }
+        scope.requireVisible(r.getPropertyId());
         String from = r.getStatus();
         if (!from.equals(status) && (Room.OFFLINE.equals(status) || Room.MAINTENANCE.equals(status))) {
             long live = bookingMapper.selectCount(new LambdaQueryWrapper<Booking>()
@@ -146,13 +153,14 @@ public class RoomService {
         }
         r.setStatus(status);
         roomMapper.updateById(r);
-        opLog.record("ROOM_STATUS", "room", id, r.getRoomNo() + " 状态 " + from + " → " + status, from, status);
+        opLog.record("ROOM_STATUS", "room", id, r.getPropertyId(), r.getRoomNo() + " 状态 " + from + " → " + status, from, status);
     }
 
     /** 房间一旦有过订单就不能物理删除，否则历史账单指向幽灵房间、报表口径全乱。 */
     @Transactional
     public void delete(Long id) {
         Room r = require(id);
+        scope.requireVisible(r.getPropertyId());
         Long bookings = bookingMapper.selectCount(
                 new LambdaQueryWrapper<Booking>().eq(Booking::getRoomId, r.getId()));
         if (bookings != null && bookings > 0) {

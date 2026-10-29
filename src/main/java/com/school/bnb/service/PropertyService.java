@@ -1,15 +1,18 @@
 package com.school.bnb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.PropertyReq;
 import com.school.bnb.entity.Property;
 import com.school.bnb.entity.Room;
 import com.school.bnb.entity.RoomType;
+import com.school.bnb.entity.SysUser;
 import com.school.bnb.mapper.PropertyMapper;
 import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.mapper.RoomTypeMapper;
+import com.school.bnb.mapper.SysUserMapper;
 import com.school.bnb.vo.PropertyVO;
 import java.time.LocalTime;
 import java.util.List;
@@ -25,15 +28,23 @@ public class PropertyService {
     private final PropertyMapper propertyMapper;
     private final RoomTypeMapper roomTypeMapper;
     private final RoomMapper roomMapper;
+    private final SysUserMapper sysUserMapper;
+    private final AccessScope scope;
 
-    public PropertyService(PropertyMapper propertyMapper, RoomTypeMapper roomTypeMapper, RoomMapper roomMapper) {
+    public PropertyService(PropertyMapper propertyMapper, RoomTypeMapper roomTypeMapper, RoomMapper roomMapper,
+                           SysUserMapper sysUserMapper, AccessScope scope) {
         this.propertyMapper = propertyMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.roomMapper = roomMapper;
+        this.sysUserMapper = sysUserMapper;
+        this.scope = scope;
     }
 
     public List<PropertyVO> list() {
-        return propertyMapper.selectList(new LambdaQueryWrapper<Property>().orderByAsc(Property::getId))
+        Long bound = scope.boundPropertyId();
+        return propertyMapper.selectList(new LambdaQueryWrapper<Property>()
+                        .eq(bound != null, Property::getId, bound)
+                        .orderByAsc(Property::getId))
                 .stream()
                 .map(p -> new PropertyVO(
                         p.getId(), p.getName(), p.getAddress(), p.getDayCutTime(),
@@ -50,6 +61,13 @@ public class PropertyService {
         return p;
     }
 
+    /** 存在性 + 可见性一起校验。所有"按 id 动一家民宿"的入口都该用它而不是 require()。 */
+    public Property requireVisible(Long id) {
+        Property p = require(id);
+        scope.requireVisible(p.getId());
+        return p;
+    }
+
     /** 给列表页批量取名字用，避免逐行查库。 */
     public Map<Long, String> nameMap() {
         return propertyMapper.selectList(null).stream()
@@ -58,6 +76,9 @@ public class PropertyService {
 
     @Transactional
     public Property save(PropertyReq req) {
+        // 民宿是"租户根"：建店、改店名与营业日切割点都只归店长。
+        // 切割点决定整家店的报表归属，让某家店的前台去改它，等于让被约束的人改约束
+        scope.requireManager();
         // 更新走"以库里现值为底，只覆盖来的字段"。两个原因：
         // 一是没有存在性检查时 updateById 对不存在的 id 影响 0 行、接口照样返回 200，
         //        调用方以为改成功了（审阅抓出）；
@@ -91,12 +112,22 @@ public class PropertyService {
     /** 实施计划 2.6：有下级数据就不许物理删除。 */
     @Transactional
     public void delete(Long id) {
+        scope.requireManager();
         require(id);
-        if (countRoomTypes(id) > 0 || countRooms(id) > 0) {
+        long users = countUsers(id);
+        if (countRoomTypes(id) > 0 || countRooms(id) > 0 || users > 0) {
             throw new BizException(ErrorCode.HAS_CHILDREN,
-                    "该民宿下仍有房型或房间，请先删除它们；或只清空地址后保留记录");
+                    "该民宿下仍有房型、房间或账号（当前账号数 " + users + "），请先处理它们；"
+                            + "或只清空地址后保留记录");
         }
         propertyMapper.deleteById(id);
+    }
+
+    /** 绑在这家店上的账号数 —— 不加这道守卫，删店会被外键以 1451 顶回来，前台看不到人话提示。 */
+    private long countUsers(Long propertyId) {
+        Long n = sysUserMapper.selectCount(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getPropertyId, propertyId));
+        return n == null ? 0 : n;
     }
 
     private long countRoomTypes(Long propertyId) {

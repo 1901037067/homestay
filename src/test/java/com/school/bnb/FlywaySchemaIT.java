@@ -74,7 +74,8 @@ class FlywaySchemaIT extends AbstractMysqlIT {
                 "fk_occ_booking",
                 "fk_rule_property",
                 "fk_rule_type",
-                "fk_bill_booking");
+                "fk_bill_booking",
+                "fk_user_property");
     }
 
     @Test

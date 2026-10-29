@@ -11,6 +11,7 @@ const OrdersView = () => import('./views/booking/OrdersView.vue')
 const PriceRuleView = () => import('./views/billing/PriceRuleView.vue')
 const StatsView = () => import('./views/stats/StatsView.vue')
 const OperationLogView = () => import('./views/system/OperationLogView.vue')
+const UserAdminView = () => import('./views/system/UserAdminView.vue')
 
 // hash 模式：将来前端是静态资源托管，不需要服务端 rewrite
 const router = createRouter({
@@ -29,7 +30,10 @@ const router = createRouter({
         { path: 'properties', component: PropertyListView },
         { path: 'rate-rules', component: PriceRuleView },
         { path: 'stats', component: StatsView },
-        { path: 'logs', component: OperationLogView }
+        { path: 'logs', component: OperationLogView },
+        // 账号页只对店长开放。路由留在前端是为了让侧栏能统一渲染，
+        // 真正的拒绝在服务层（AccessScope.requireManager），手敲 URL 也一样吃 1003
+        { path: 'users', component: UserAdminView }
       ]
     }
   ]

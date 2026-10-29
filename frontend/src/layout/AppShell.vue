@@ -5,14 +5,14 @@
         <!-- 品牌位直接用标签页那枚 favicon.svg：同一张图，页面与标签头不会长两个样 -->
         <img class="brand__mark" src="/favicon.svg" alt="" width="34" height="34" />
         <span v-if="navLabels" class="brand__text">
-          <strong>云栖民宿</strong>
-          <small>分时预订系统</small>
+          <strong>{{ brandName }}</strong>
+          <small>{{ scopeNote }}</small>
         </span>
       </div>
 
       <nav class="nav">
         <router-link
-          v-for="item in nav"
+          v-for="item in visibleNav"
           :key="item.path"
           :to="item.path"
           class="nav__item"
@@ -69,7 +69,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document,
-  PriceTag, TrendCharts, Sunny, Moon, Setting
+  PriceTag, TrendCharts, Sunny, Moon, Setting, User
 } from '@element-plus/icons-vue'
 import { THEME_MODES, useTheme } from '../composables/useTheme'
 import SettingsDialog from '../components/SettingsDialog.vue'
@@ -90,11 +90,18 @@ const nav = [
   { path: '/properties', label: '民宿', icon: House },
   { path: '/rate-rules', label: '价格规则', icon: PriceTag },
   { path: '/stats', label: '报表', icon: TrendCharts },
-  { path: '/logs', label: '操作日志', icon: Document }
+  { path: '/logs', label: '操作日志', icon: Document },
+  { path: '/users', label: '账号', icon: User, managerOnly: true }
 ]
 
 const user = computed(() => JSON.parse(localStorage.getItem('bnb_user') || 'null'))
 const initial = computed(() => (user.value?.displayName || '?').slice(0, 1))
+// 侧栏只是"不显示入口"，真正的拒绝在服务层（requireManager 抛 1003）——
+// 前端隐藏属于体验，前端隐藏 + 后端不校验才是漏洞
+const isManager = computed(() => user.value?.manager !== false)
+const visibleNav = computed(() => nav.filter((n) => !n.managerOnly || isManager.value))
+const brandName = computed(() => (isManager.value ? '云栖民宿' : user.value?.propertyName || '民宿前台'))
+const scopeNote = computed(() => (isManager.value ? '分时预订系统 · 全部门店' : '分时预订系统 · 前台'))
 
 // 三档配色收进设置里，侧栏这一枚只管"把当前看到的翻过来"。
 // auto 档下按钮显示的是系统此刻解析出来的那一档，点一下就把模式钉死成相反档

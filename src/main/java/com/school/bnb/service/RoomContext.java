@@ -1,5 +1,6 @@
 package com.school.bnb.service;
 
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.entity.Property;
@@ -26,18 +27,29 @@ public class RoomContext {
     private final RoomMapper roomMapper;
     private final RoomTypeMapper roomTypeMapper;
     private final PropertyMapper propertyMapper;
+    private final AccessScope scope;
 
-    public RoomContext(RoomMapper roomMapper, RoomTypeMapper roomTypeMapper, PropertyMapper propertyMapper) {
+    public RoomContext(RoomMapper roomMapper, RoomTypeMapper roomTypeMapper, PropertyMapper propertyMapper,
+                       AccessScope scope) {
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.propertyMapper = propertyMapper;
+        this.scope = scope;
     }
 
+    /**
+     * 取一间房的上下文，<b>并顺手做民宿可见性校验</b>。
+     *
+     * <p>校验放这里而不是各写路径里各判一次：下单、改期、入住、退房、加时、取消、试算、结算
+     * 全都经过这一个方法拿房间上下文，写在这里等于"凡是碰别人家房间的动作都要过一遍"，
+     * 新增一条写路径时自动带上，不会漏。
+     */
     public Data of(Long roomId) {
         Room room = roomMapper.selectById(roomId);
         if (room == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + roomId);
         }
+        scope.requireVisible(room.getPropertyId());
         RoomType type = roomTypeMapper.selectById(room.getRoomTypeId());
         if (type == null) {
             throw new BizException(ErrorCode.ROOM_TYPE_NOT_FOUND, "房间未配置房型: " + roomId);

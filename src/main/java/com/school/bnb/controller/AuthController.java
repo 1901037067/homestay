@@ -5,12 +5,12 @@ import com.school.bnb.common.LoginInterceptor;
 import com.school.bnb.common.R;
 import com.school.bnb.dto.LoginReq;
 import com.school.bnb.service.AuthService;
+import com.school.bnb.vo.MeVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
-import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,11 +30,11 @@ public class AuthController {
 
     @Operation(summary = "登录")
     @PostMapping("/login")
-    public R<Map<String, String>> login(@Valid @RequestBody LoginReq req, HttpServletRequest httpReq) {
+    public R<MeVO> login(@Valid @RequestBody LoginReq req, HttpServletRequest httpReq) {
         LoginInterceptor.LoginUser user = authService.login(req.username(), req.password());
         HttpSession session = httpReq.getSession(true);
         session.setAttribute(LoginInterceptor.SESSION_KEY, user);
-        return R.ok(Map.of("username", user.username(), "displayName", user.displayName()));
+        return R.ok(authService.toMe(user));
     }
 
     @Operation(summary = "登出", description = "session.invalidate()，真失效")
@@ -47,9 +47,9 @@ public class AuthController {
         return R.ok();
     }
 
-    @Operation(summary = "当前登录人")
+    @Operation(summary = "当前登录人", description = "含归属民宿与是否店长，界面据此决定可见入口")
     @GetMapping("/me")
-    public R<LoginInterceptor.LoginUser> me() {
-        return R.ok(AuthContext.current());
+    public R<MeVO> me() {
+        return R.ok(authService.toMe(AuthContext.current()));
     }
 }

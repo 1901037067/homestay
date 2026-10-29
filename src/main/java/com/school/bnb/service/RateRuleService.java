@@ -2,6 +2,7 @@ package com.school.bnb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.school.bnb.billing.RateRuleDef;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.RateRuleReq;
@@ -36,18 +37,22 @@ public class RateRuleService {
     private final PropertyService propertyService;
     private final RoomTypeService roomTypeService;
     private final OperationLogService opLog;
+    private final AccessScope scope;
 
     public RateRuleService(RateRuleMapper ruleMapper, PropertyService propertyService,
-                           RoomTypeService roomTypeService, OperationLogService opLog) {
+                           RoomTypeService roomTypeService, OperationLogService opLog,
+                           AccessScope scope) {
         this.ruleMapper = ruleMapper;
         this.propertyService = propertyService;
         this.roomTypeService = roomTypeService;
         this.opLog = opLog;
+        this.scope = scope;
     }
 
     // ------------------------------------------------------------------ CRUD
 
     public List<RateRuleVO> list(Long propertyId) {
+        propertyId = scope.narrow(propertyId);
         List<RateRule> rows = ruleMapper.selectList(new LambdaQueryWrapper<RateRule>()
                 .eq(propertyId != null, RateRule::getPropertyId, propertyId)
                 .orderByAsc(RateRule::getPropertyId)
@@ -70,7 +75,7 @@ public class RateRuleService {
 
     @Transactional
     public RateRule save(RateRuleReq req) {
-        propertyService.require(req.propertyId());
+        propertyService.requireVisible(req.propertyId());
         RateRuleDef.Mode mode = parseMode(req.mode());
         List<Integer> days = normalizeWeekdays(req.weekdays());
         validate(req, mode, days);
@@ -99,6 +104,7 @@ public class RateRuleService {
         // 价格规则的每一次改动都会直接改变试算与账单金额 —— 这条必须留痕，
         // 否则"是谁把周末上浮从 1.2 调到 1.5"在审计里是查不到的
         opLog.record(before == null ? "RATE_RULE_CREATE" : "RATE_RULE_UPDATE", "rate_rule", r.getId(),
+                r.getPropertyId(),
                 ruleSummary(r), before, r);
         return r;
     }
@@ -106,8 +112,10 @@ public class RateRuleService {
     @Transactional
     public void delete(Long id) {
         RateRule before = require(id);
+        scope.requireVisible(before.getPropertyId());
         ruleMapper.deleteById(id);
-        opLog.record("RATE_RULE_DELETE", "rate_rule", id, "删除规则｜" + ruleSummary(before), before, null);
+        opLog.record("RATE_RULE_DELETE", "rate_rule", id, before.getPropertyId(),
+                "删除规则｜" + ruleSummary(before), before, null);
     }
 
     /** 一句人话：名字 + 改哪笔钱 + 怎么改。审计列表里不该出现一串 JSON。 */

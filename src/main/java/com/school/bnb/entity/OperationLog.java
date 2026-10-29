@@ -17,6 +17,8 @@ public class OperationLog {
     private String action;
     private String entity;
     private Long entityId;
+    /** 这条动作归属的民宿；null = 跨店或系统级（登录、账号管理）。审计页按它隔离。 */
+    private Long propertyId;
     private String summary;
     private String beforeJson;
     private String afterJson;

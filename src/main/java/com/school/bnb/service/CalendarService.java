@@ -1,6 +1,7 @@
 package com.school.bnb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.entity.Property;
@@ -37,16 +38,20 @@ public class CalendarService {
     private final RoomMapper roomMapper;
     private final RoomTypeMapper roomTypeMapper;
     private final OccupancyMapper occupancyMapper;
+    private final AccessScope scope;
 
     public CalendarService(PropertyMapper propertyMapper, RoomMapper roomMapper,
-                           RoomTypeMapper roomTypeMapper, OccupancyMapper occupancyMapper) {
+                           RoomTypeMapper roomTypeMapper, OccupancyMapper occupancyMapper,
+                           AccessScope scope) {
         this.propertyMapper = propertyMapper;
         this.roomMapper = roomMapper;
         this.roomTypeMapper = roomTypeMapper;
         this.occupancyMapper = occupancyMapper;
+        this.scope = scope;
     }
 
     public CalendarVO calendar(Long propertyId, LocalDate date) {
+        propertyId = scope.narrow(propertyId);
         Property property = propertyMapper.selectById(propertyId);
         if (property == null) {
             throw new BizException(ErrorCode.PROPERTY_NOT_FOUND, "民宿不存在: " + propertyId);

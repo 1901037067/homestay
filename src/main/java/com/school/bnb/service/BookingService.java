@@ -6,6 +6,7 @@ import com.school.bnb.booking.BookingKernel;
 import com.school.bnb.billing.PricingFrames;
 import com.school.bnb.booking.SaleType;
 import com.school.bnb.booking.SellPolicy;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.ChangeTimesReq;
@@ -59,11 +60,13 @@ public class BookingService {
     private final OccupancyMapper occupancyMapper;
     private final RoomContext roomContext;
     private final OperationLogService opLog;
+    private final AccessScope scope;
 
     public BookingService(BookingKernel kernel, BookingMapper bookingMapper, RoomMapper roomMapper,
                           RoomTypeMapper roomTypeMapper, PropertyMapper propertyMapper,
                           OccupancyMapper occupancyMapper, RoomContext roomContext,
-                          OperationLogService opLog) {
+                          OperationLogService opLog,
+                          AccessScope scope) {
         this.kernel = kernel;
         this.bookingMapper = bookingMapper;
         this.roomMapper = roomMapper;
@@ -72,6 +75,7 @@ public class BookingService {
         this.occupancyMapper = occupancyMapper;
         this.roomContext = roomContext;
         this.opLog = opLog;
+        this.scope = scope;
     }
 
     // ------------------------------------------------------------ 写操作
@@ -116,7 +120,7 @@ public class BookingService {
             bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(), frames.chargeUnitMinutes());
             b.setCoveredMinutes(frames.coveredMinutes());
             b.setChargeUnitMinutes(frames.chargeUnitMinutes());
-            opLog.record("BOOKING_CREATE", "booking", b.getId(),
+            opLog.record("BOOKING_CREATE", "booking", b.getId(), ctx.property().getId(),
                     String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
                             b.getStartTime(), b.getEndTime(), b.getStatus()),
                     null, b);
@@ -131,7 +135,7 @@ public class BookingService {
         assertSellable(ctx, req.startTime(), req.endTime(), parseSaleType(b.getSaleType()));
         Booking after = kernel.changeTimes(bookingId, req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes());
-        opLog.record("BOOKING_RESCHEDULE", "booking", bookingId,
+        opLog.record("BOOKING_RESCHEDULE", "booking", bookingId, ctx.property().getId(),
                 String.format("%s %s｜改为 %s → %s", ctx.room().getRoomNo(), after.getBookingNo(),
                         after.getStartTime(), after.getEndTime()),
                 snapshot(b), after);
@@ -150,7 +154,7 @@ public class BookingService {
             throw new BizException(v.code(), v.reason());
         }
         Booking after = kernel.extend(bookingId, req.newEndTime(), ctx.type().getCleanAfterMinutes());
-        opLog.record("BOOKING_EXTEND", "booking", bookingId,
+        opLog.record("BOOKING_EXTEND", "booking", bookingId, ctx.property().getId(),
                 String.format("%s %s｜离店从 %s 延到 %s", ctx.room().getRoomNo(), after.getBookingNo(),
                         b.getEndTime(), after.getEndTime()),
                 snapshot(b), after);
@@ -162,7 +166,7 @@ public class BookingService {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
         Booking after = kernel.confirm(bookingId);
-        opLog.record("BOOKING_CONFIRM", "booking", bookingId,
+        opLog.record("BOOKING_CONFIRM", "booking", bookingId, ctx.property().getId(),
                 ctx.room().getRoomNo() + " " + after.getBookingNo() + " 预占转确认", snapshot(b), after);
         return toVO(after, ctx);
     }
@@ -172,7 +176,7 @@ public class BookingService {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
         Booking after = kernel.checkIn(bookingId, LocalDateTime.now());
-        opLog.record("BOOKING_CHECK_IN", "booking", bookingId,
+        opLog.record("BOOKING_CHECK_IN", "booking", bookingId, ctx.property().getId(),
                 String.format("%s %s｜%s 入住（计划 %s）", ctx.room().getRoomNo(), after.getBookingNo(),
                         after.getGuestName(), after.getStartTime()),
                 snapshot(b), after);
@@ -189,7 +193,7 @@ public class BookingService {
         // （实测差 0.4 秒跨过分单位，日志写 9 分钟、行里量出 10 分钟）。既然要拿它算分钟写日志，就取整到秒
         BookingKernel.CheckOutOutcome out = kernel.checkOut(bookingId, LocalDateTime.now().withNano(0), configured);
         Booking after = out.booking();
-        opLog.record("BOOKING_CHECK_OUT", "booking", bookingId,
+        opLog.record("BOOKING_CHECK_OUT", "booking", bookingId, ctx.property().getId(),
                 String.format("%s 退房（%s），%s", ctx.room().getRoomNo(), after.getBookingNo(),
                         cleaningNote(configured, out)),
                 before, after);
@@ -224,7 +228,7 @@ public class BookingService {
         Ctx ctx = ctx(roomId);
         int n = kernel.finishCleaning(roomId);
         if (n > 0) {
-            opLog.record("CLEANING_DONE", "room", roomId,
+            opLog.record("CLEANING_DONE", "room", roomId, ctx.property().getId(),
                     ctx.room().getRoomNo() + " 清扫完成，恢复可售", null, null);
         }
         return n;
@@ -235,7 +239,7 @@ public class BookingService {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
         Booking after = kernel.cancel(bookingId);
-        opLog.record("BOOKING_CANCEL", "booking", bookingId,
+        opLog.record("BOOKING_CANCEL", "booking", bookingId, ctx.property().getId(),
                 String.format("%s %s｜取消 %s → %s 的订单（%s）", ctx.room().getRoomNo(),
                         after.getBookingNo(), after.getStartTime(), after.getEndTime(), after.getGuestName()),
                 snapshot(b), after);
@@ -246,7 +250,11 @@ public class BookingService {
 
     public Page<BookingVO> list(long pageNo, long pageSize, String status, Long roomId,
                                 String keyword, LocalDateTime from, LocalDateTime to) {
+        Long bound = scope.boundPropertyId();
         LambdaQueryWrapper<Booking> q = new LambdaQueryWrapper<Booking>()
+                // 订单没有民宿列，靠房间归属来隔离。用 {0} 占位而不是拼字符串：
+                // 这里传进去的是 Long，拼不出注入，但口径统一比"这次反正安全"更靠得住
+                .apply(bound != null, "room_id in (select id from room where property_id = {0})", bound)
                 .eq(status != null && !status.isBlank(), Booking::getStatus, status)
                 .eq(roomId != null, Booking::getRoomId, roomId)
                 .ge(from != null, Booking::getStartTime, from)
@@ -308,6 +316,7 @@ public class BookingService {
         if (start == null || end == null || !end.isAfter(start)) {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE, "end 必须晚于 start");
         }
+        propertyId = scope.narrow(propertyId);
         SaleType type = saleType == null ? SaleType.HOURLY : saleType;
         List<Room> rooms = roomMapper.findAvailable(propertyId, start, end);
         if (rooms.isEmpty()) {

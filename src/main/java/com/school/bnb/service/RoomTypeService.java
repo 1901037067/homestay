@@ -1,6 +1,7 @@
 package com.school.bnb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.dto.RoomTypeReq;
@@ -22,16 +23,20 @@ public class RoomTypeService {
     private final RoomMapper roomMapper;
     private final PropertyService propertyService;
     private final OperationLogService opLog;
+    private final AccessScope scope;
 
     public RoomTypeService(RoomTypeMapper roomTypeMapper, RoomMapper roomMapper,
-                           PropertyService propertyService, OperationLogService opLog) {
+                           PropertyService propertyService, OperationLogService opLog,
+                           AccessScope scope) {
         this.roomTypeMapper = roomTypeMapper;
         this.roomMapper = roomMapper;
         this.propertyService = propertyService;
         this.opLog = opLog;
+        this.scope = scope;
     }
 
     public List<RoomTypeVO> list(Long propertyId) {
+        propertyId = scope.narrow(propertyId);
         LambdaQueryWrapper<RoomType> q = new LambdaQueryWrapper<RoomType>()
                 .eq(propertyId != null, RoomType::getPropertyId, propertyId)
                 .orderByAsc(RoomType::getPropertyId)
@@ -57,7 +62,7 @@ public class RoomTypeService {
 
     @Transactional
     public RoomType save(RoomTypeReq req) {
-        propertyService.require(req.propertyId());
+        propertyService.requireVisible(req.propertyId());
         RoomType existing = req.id() == null ? null : require(req.id());
         if (existing != null && !existing.getPropertyId().equals(req.propertyId())) {
             // 改挂到别的民宿会留下"房间属于 A 店、房型属于 B 店"的错配。
@@ -90,6 +95,7 @@ public class RoomTypeService {
         // 改价必须留痕：这一列直接决定账单金额，而账单是钱的凭证。
         // 之前只记了订单与房间状态，"谁把 212 改成了 188"这种追问是答不出来的
         opLog.record(existing == null ? "ROOM_TYPE_CREATE" : "ROOM_TYPE_UPDATE", "room_type", t.getId(),
+                t.getPropertyId(),
                 priceSummary(existing, t), existing, t);
         return t;
     }
@@ -119,7 +125,7 @@ public class RoomTypeService {
 
     @Transactional
     public void delete(Long id) {
-        require(id);
+        scope.requireVisible(require(id).getPropertyId());
         long rooms = countRooms(id);
         if (rooms > 0) {
             throw new BizException(ErrorCode.HAS_CHILDREN, "该房型下仍有 " + rooms + " 间房，请先调整房间的房型");

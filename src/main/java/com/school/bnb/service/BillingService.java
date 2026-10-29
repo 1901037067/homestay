@@ -163,7 +163,7 @@ public class BillingService {
         billMapper.insert(bill);
 
         Booking settled = kernel.require(bookingId);
-        opLog.record("BOOKING_SETTLE", "booking", bookingId,
+        opLog.record("BOOKING_SETTLE", "booking", bookingId, p.ctx().property().getId(),
                 String.format("%s %s｜收款 %s 元（其中超时费 %s 元）", bill.getRoomNo(),
                         settled.getBookingNo(), total.toPlainString(),
                         p.quote().overageAmount().toPlainString()),

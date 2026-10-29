@@ -8,6 +8,10 @@ public final class ErrorCode {
 
     public static final int LOGIN_FAILED = 1001;
     public static final int USER_DISABLED = 1002;
+    /** 越界：请求的数据不属于当前账号可看的民宿，或功能只允许店长使用。 */
+    public static final int FORBIDDEN = 1003;
+    public static final int DUPLICATE_USERNAME = 1004;
+    public static final int USER_NOT_FOUND = 1005;
 
     public static final int ROOM_NOT_FOUND = 2001;
     public static final int ROOM_HAS_HISTORY = 2002;

@@ -23,13 +23,20 @@ public class OperationLogService {
 
     private final OperationLogMapper mapper;
     private final ObjectMapper json;
+    private final com.school.bnb.common.AccessScope scope;
 
-    public OperationLogService(OperationLogMapper mapper, ObjectMapper json) {
+    public OperationLogService(OperationLogMapper mapper, ObjectMapper json,
+                               com.school.bnb.common.AccessScope scope) {
         this.mapper = mapper;
         this.json = json;
+        this.scope = scope;
     }
 
-    public void record(String action, String entity, Long entityId, String summary,
+    /**
+     * @param propertyId 这条动作归属的民宿。摘要里带房号与客人姓名，所以它本身就是民宿数据；
+     *                   跨店/系统级动作（登录、账号管理）传 null，只有店长能在审计页看到那些。
+     */
+    public void record(String action, String entity, Long entityId, Long propertyId, String summary,
                        Object before, Object after) {
         try {
             OperationLog row = new OperationLog();
@@ -41,6 +48,7 @@ public class OperationLogService {
             row.setAction(action);
             row.setEntity(entity);
             row.setEntityId(entityId);
+            row.setPropertyId(propertyId);
             row.setSummary(summary);
             row.setBeforeJson(write(before));
             row.setAfterJson(write(after));
@@ -64,8 +72,13 @@ public class OperationLogService {
     /** 日志查询。默认时间倒序 —— 前台关心的是"刚才谁动了"。 */
     public com.baomidou.mybatisplus.extension.plugins.pagination.Page<OperationLog> page(
             long pageNo, long pageSize, String action, String entity, Long entityId, String username) {
+        // 绑定单一民宿的账号只看自己店的那些行：摘要里有房号和客人姓名，
+        // 不收窄等于把别家店的客人名单交给了前台。店长（bound=null）看全部，
+        // 含 property_id 为 null 的跨店/系统级动作
+        Long bound = scope.boundPropertyId();
         return mapper.selectPage(new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(pageNo, pageSize),
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<OperationLog>()
+                        .eq(bound != null, OperationLog::getPropertyId, bound)
                         .eq(action != null && !action.isBlank(), OperationLog::getAction, action)
                         .eq(entity != null && !entity.isBlank(), OperationLog::getEntity, entity)
                         .eq(entityId != null, OperationLog::getEntityId, entityId)
