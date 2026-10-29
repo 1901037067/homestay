@@ -53,17 +53,18 @@ public class PropertyService {
                 .toList();
     }
 
+    /**
+     * 按 id 取一家民宿，<b>并校验它在当前账号的可见范围内</b>。
+     *
+     * <p>校验放在 require() 而不是各调用点：这一句同时堵掉"详情接口按 id 读别店"和
+     * "PUT 路径给别店 id、请求体给本店 propertyId 的覆盖式改写"两条路 —— 第十轮审阅的
+     * 第 1、2 条本质是同一个洞：只认新归属、不认原归属。收在这里，新增的用法自动带上。
+     */
     public Property require(Long id) {
         Property p = propertyMapper.selectById(id);
         if (p == null) {
             throw new BizException(ErrorCode.PROPERTY_NOT_FOUND, "民宿不存在: " + id);
         }
-        return p;
-    }
-
-    /** 存在性 + 可见性一起校验。所有"按 id 动一家民宿"的入口都该用它而不是 require()。 */
-    public Property requireVisible(Long id) {
-        Property p = require(id);
         scope.requireVisible(p.getId());
         return p;
     }

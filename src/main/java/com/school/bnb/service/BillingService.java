@@ -84,6 +84,9 @@ public class BillingService {
      */
     public BillVO view(Long bookingId) {
         Booking b = kernel.require(bookingId);
+        // 先过一遍房间上下文：它顺手做民宿可见性校验。已结算的分支直接读 bill 快照、
+        // 不经过 preview，少了这一句就能用别人的订单号读到别家店的账单
+        roomContext.of(b.getRoomId());
         if (Booking.SETTLED.equals(b.getStatus())) {
             Bill bill = billMapper.findByBookingId(bookingId);
             if (bill != null) {

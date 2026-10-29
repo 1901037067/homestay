@@ -159,6 +159,75 @@ class UserAdminIT extends AbstractMysqlIT {
                 .isEqualTo(ErrorCode.BAD_REQUEST);
     }
 
+    @Test
+    @DisplayName("清空归属真的能升成店长：库里 property_id 必须是 NULL，不只是 VO 看着对")
+    void clearingOwnershipActuallyPersists() throws Exception {
+        String username = "up" + System.nanoTime();
+        var created = userService.save(new UserReq(null, username, "先当前台", "Admin@123", P1, true));
+        assertThat(jdbc.queryForObject("select property_id from sys_user where id = ?",
+                Long.class, created.id())).isEqualTo(P1);
+
+        assertThat(saveUser(created.id(), new UserReq(created.id(), username, "升为店长",
+                null, null, true))).isZero();
+
+        // MyBatis-Plus 默认跳过 null 字段，这一句会红：接口返回 200、列表里也显示"店长"
+        // （那是从入参构造的 VO），只有下次登录才发现根本没升上去
+        assertThat(jdbc.queryForObject("select property_id from sys_user where id = ?",
+                Long.class, created.id())).isNull();
+        MockHttpSession session = login(username);
+        assertThat(json.readTree(mockMvc.perform(get("/api/properties").session(session))
+                .andReturn().getResponse().getContentAsString()).path("data"))
+                .as("升上去之后应当看得到全部门店").hasSizeGreaterThan(1);
+    }
+
+    @Test
+    @DisplayName("两个店长同时互相降级：只能成一个，系统不能一个店长都不剩")
+    void concurrentDemotionCannotEmptyTheManagerSet() throws Exception {
+        String a = "bossA_" + System.nanoTime();
+        String b = "bossB_" + System.nanoTime();
+        var bossA = userService.save(new UserReq(null, a, "店长A", "Admin@123", null, true));
+        var bossB = userService.save(new UserReq(null, b, "店长B", "Admin@123", null, true));
+        MockHttpSession sessionA = login(a);
+        MockHttpSession sessionB = login(b);
+        long adminId = jdbc.queryForObject("select id from sys_user where username = 'admin'", Long.class);
+
+        // 先把店长集合缩到恰好这两个（含把 admin 暂时降成前台）。不这么做，场上有三个店长，
+        // "两个都降级"本来就是合法的，测不出竞态。admin 放在 try/finally 里恢复，
+        // 否则它一旦留在前台状态，后面所有以 admin 登录的用例都会被作用域挡掉
+        try {
+            jdbc.update("update sys_user set property_id = 1 "
+                    + "where property_id is null and id not in (?, ?)", bossA.id(), bossB.id());
+
+            var barrier = new java.util.concurrent.CyclicBarrier(2);
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            var first = pool.submit(() -> {
+                barrier.await();
+                return saveUserOn(sessionA, bossA.id(),
+                        new UserReq(bossA.id(), a, "店长A", null, P1, true));
+            });
+            var second = pool.submit(() -> {
+                barrier.await();
+                return saveUserOn(sessionB, bossB.id(),
+                        new UserReq(bossB.id(), b, "店长B", null, P1, true));
+            });
+            int codeA = first.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            int codeB = second.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            pool.shutdown();
+
+            long stillManagers = jdbc.queryForObject(
+                    "select count(1) from sys_user where property_id is null and enabled = 1", Long.class);
+            assertThat(stillManagers)
+                    .as("两次降级各自返回 %s / %s，店长不能归零", codeA, codeB).isPositive();
+            assertThat((codeA == 0 ? 1 : 0) + (codeB == 0 ? 1 : 0))
+                    .as("只有一个能成，另一个必须被拒（返回 %s / %s）", codeA, codeB).isEqualTo(1);
+        } finally {
+            jdbc.update("update sys_user set property_id = null where id = ?", adminId);
+            jdbc.update("update sys_user set property_id = null where id in (?, ?)", bossA.id(), bossB.id());
+        }
+    }
+
+    // ---------------------------------------------------------------- 夹具
+
     private int saveUserOn(MockHttpSession session, long id, UserReq req) throws Exception {
         return json.readTree(mockMvc.perform(put("/api/users/" + id).session(session)
                         .contentType(MediaType.APPLICATION_JSON)

@@ -68,11 +68,18 @@ public class RoomService {
         return out;
     }
 
+    /**
+     * 按 id 取一间房，<b>并校验它在当前账号的可见范围内</b>。
+     *
+     * <p>详情接口（{@code GET /api/rooms/{id}}）与修改路径（save 里读到的 existing）
+     * 都走这一句，所以"只认新归属、不认原归属"那两类越界一起被堵掉。
+     */
     public Room require(Long id) {
         Room r = roomMapper.selectById(id);
         if (r == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + id);
         }
+        scope.requireVisible(r.getPropertyId());
         return r;
     }
 

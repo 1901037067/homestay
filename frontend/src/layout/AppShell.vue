@@ -165,9 +165,21 @@ async function onCommand(cmd) {
   justify-content: center;
   padding: 8px 0;
 }
-.side--icon .user,
+/* 图标栏模式：内容只有 48px 宽（64 - 左右各 8），底部三样必须改竖排。
+   横排放两枚 32px 按钮要 72px，会顶出侧栏 —— 就是截图里那个溢出 */
+.side--icon .side__foot {
+  flex-direction: column;
+  align-items: center;
+}
+.side--icon .side__foot :deep(.el-dropdown) {
+  flex: none;
+}
+.side--icon .user {
+  width: 34px;
+  padding: 4px;
+}
 .side--icon .tools {
-  justify-content: center;
+  flex-direction: column;
 }
 
 .brand {
@@ -243,14 +255,6 @@ async function onCommand(cmd) {
 .side__foot :deep(.el-dropdown) {
   flex: 1;
   min-width: 0;
-}
-
-/* 收成图标栏时这一行放不下，改为竖排 */
-.side--icon .side__foot {
-  flex-direction: column;
-}
-.side--icon .side__foot :deep(.el-dropdown) {
-  flex: none;
 }
 
 .user {
@@ -348,6 +352,17 @@ async function onCommand(cmd) {
     margin-left: auto;
     flex-direction: row;
     align-items: center;
+  }
+  /* 窄屏是一条横向顶栏，宽度够用：图标栏模式那套竖排收在这里要还原，
+     否则两枚按钮会叠成两层、把顶栏撑高 */
+  .side--icon .side__foot {
+    flex-direction: row;
+  }
+  .side--icon .tools {
+    flex-direction: row;
+  }
+  .side--icon .user {
+    width: auto;
   }
   .user {
     width: auto;

@@ -75,7 +75,7 @@ public class RateRuleService {
 
     @Transactional
     public RateRule save(RateRuleReq req) {
-        propertyService.requireVisible(req.propertyId());
+        propertyService.require(req.propertyId());
         RateRuleDef.Mode mode = parseMode(req.mode());
         List<Integer> days = normalizeWeekdays(req.weekdays());
         validate(req, mode, days);
@@ -129,11 +129,13 @@ public class RateRuleService {
         return String.format("%s（%s，%s）", r.getName(), how, target);
     }
 
+    /** 按 id 取一条规则，<b>并校验它属于当前账号可见的民宿</b>（改路径给别店 id 也读不到、改不了）。 */
     public RateRule require(Long id) {
         RateRule r = ruleMapper.selectById(id);
         if (r == null) {
             throw new BizException(ErrorCode.RULE_NOT_FOUND, "价格规则不存在: " + id);
         }
+        scope.requireVisible(r.getPropertyId());
         return r;
     }
 

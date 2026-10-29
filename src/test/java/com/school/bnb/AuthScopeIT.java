@@ -1,17 +1,24 @@
 package com.school.bnb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.school.bnb.booking.BookingKernel;
 import com.school.bnb.common.ErrorCode;
+import com.school.bnb.dto.CreateBookingCmd;
+import com.school.bnb.dto.RateRuleReq;
 import com.school.bnb.dto.RoomReq;
 import com.school.bnb.dto.RoomTypeReq;
 import com.school.bnb.dto.UserReq;
+import com.school.bnb.entity.Booking;
 import com.school.bnb.entity.Room;
+import com.school.bnb.service.RateRuleService;
 import com.school.bnb.service.RoomService;
 import com.school.bnb.service.RoomTypeService;
 import com.school.bnb.service.UserService;
@@ -24,16 +31,21 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * 按民宿隔离（第十轮：账号管理 + 数据可见范围）。
+ * 按民宿隔离（账号管理 + 数据可见范围）。
  *
  * <p>种子账号里 {@code staff}（前台小张）绑在 1 号民宿，{@code admin} 不绑 = 店长。
  * 这一类测的是同一件事的两个方向：<b>越界必须被拒</b>，而<b>本分内的操作不能被一起挡掉</b>。
  * 只测前一半，很容易写出一个"什么都 403"的实现还全绿。
+ *
+ * <p>覆盖形状是"本店/别店 × 列表/详情/新增/修改/删除/账单/导出"。第十轮审阅抓到的正是
+ * 这张表里缺的两列 —— <b>按 id 的详情</b>与<b>路径 id 和请求体归属不一致的修改</b>：
+ * 列表过滤做对了，照样能用一个 id 直接读到或改掉别店的记录。
  */
 @AutoConfigureMockMvc
 class AuthScopeIT extends AbstractMysqlIT {
@@ -44,8 +56,11 @@ class AuthScopeIT extends AbstractMysqlIT {
 
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper json;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired BookingKernel kernel;
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
+    @Autowired RateRuleService rateRuleService;
     @Autowired UserService userService;
 
     private MockHttpSession login(String username) throws Exception {
@@ -197,7 +212,126 @@ class AuthScopeIT extends AbstractMysqlIT {
                 .andExpect(status().isUnauthorized());
     }
 
+    // ------------------------------------ 第十轮审阅：按 id 的详情与修改路径
+
+    @Test
+    @DisplayName("按 id 读详情也越不了界：房间、订单、已结算账单快照三条路径都要过归属校验")
+    void detailEndpointsRejectForeignIds() throws Exception {
+        long[] mine = fixtureIn(P1);
+        long[] theirs = fixtureIn(P2);
+        MockHttpSession manager = login("admin");
+        MockHttpSession staff = login("staff");
+
+        // 先在别店造一张订单并走完入住→退房→结算，前台才谈得上"拿别人的单号来读"。
+        // 已结算那条分支直接读 bill 快照、不经过 preview，是最容易漏校验的一条路
+        long foreignBooking = settledBookingIn(theirs[1]);
+        long myBooking = settledBookingIn(mine[1]);
+        // 结算要留在店长身份下做：settledBookingIn 只推进到 CHECKED_OUT，
+        // 而"已结算读快照"这条分支才是审阅指出的漏点
+        assertThat(postEmpty(manager, "/api/bookings/" + foreignBooking + "/settle")).isZero();
+        assertThat(postEmpty(manager, "/api/bookings/" + myBooking + "/settle")).isZero();
+
+        assertThat(codeOf(staff, "/api/rooms/" + theirs[1]))
+                .as("别店房间详情").isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(codeOf(staff, "/api/bookings/" + foreignBooking))
+                .as("别店订单详情：姓名、电话、金额都在里面").isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(codeOf(staff, "/api/bookings/" + foreignBooking + "/bill"))
+                .as("别店已结算账单快照").isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(codeOf(staff, "/api/bookings/" + myBooking + "/bill"))
+                .as("本店账单照常可读，隔离不能把合法路径一起挡掉").isZero();
+    }
+
+    @Test
+    @DisplayName("PUT 路径给别店 id、请求体给本店归属：原归属也要校验，改不动")
+    void updateCannotReachOtherStoreByMismatchedBody() throws Exception {
+        MockHttpSession staff = login("staff");
+        long[] mine = fixtureIn(P1);
+        long[] theirs = fixtureIn(P2);
+        long foreignRule = rateRuleIn(P2);
+
+        // 三条都只认"请求体里的新归属可见"，就会把别店的记录搬到自己店名下。
+        // 请求体刻意做成"本店房型 + 本店归属"这样自洽的形式 —— 否则会被"房型不属于这家民宿"
+        // 之类的普通校验先挡掉，测不到真正要测的那一句原归属校验
+        assertThat(putJson(staff, "/api/rooms/" + theirs[1],
+                new RoomReq(theirs[1], P1, mine[0], "搬过来", 1, Room.ON_SALE)))
+                .isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(putJson(staff, "/api/room-types/" + theirs[0],
+                new RoomTypeReq(theirs[0], P1, "搬过来的房型", new BigDecimal("100.00"),
+                        2, new BigDecimal("20.00"), null, 0, 0,
+                        LocalTime.of(14, 0), LocalTime.of(12, 0))))
+                .isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(putJson(staff, "/api/rate-rules/" + foreignRule,
+                rateRuleBody(foreignRule, P1)))
+                .isEqualTo(ErrorCode.FORBIDDEN);
+
+        // 库里确实没被动过 —— 只看接口返回码会漏掉"报错但已经改了"这种半成功
+        assertThat(jdbc.queryForObject("select property_id from room where id = ?", Long.class, theirs[1]))
+                .isEqualTo(P2);
+        assertThat(jdbc.queryForObject("select property_id from rate_rule where id = ?", Long.class, foreignRule))
+                .isEqualTo(P2);
+    }
+
+    @Test
+    @DisplayName("删除与导出也不能指向别店")
+    void deleteAndExportRespectScope() throws Exception {
+        MockHttpSession staff = login("staff");
+        long[] theirs = fixtureIn(P2);
+
+        assertThat(codeOf(staff, "DELETE", "/api/rooms/" + theirs[1]))
+                .isEqualTo(ErrorCode.FORBIDDEN);
+        assertThat(jdbc.queryForObject("select count(1) from room where id = ?", Integer.class, theirs[1]))
+                .as("被拒的删除不能真的把别店的房删掉").isEqualTo(1);
+        assertThat(codeOf(staff, "/api/stats/export?propertyId=" + P2))
+                .isEqualTo(ErrorCode.FORBIDDEN);
+    }
+
     // ---------------------------------------------------------------- 夹具
+
+    /** 在指定民宿造一对"房型 + 房间"，返回 {房型 id, 房间 id}。 */
+    private long[] fixtureIn(long propertyId) {
+        String tag = String.valueOf(System.nanoTime());
+        long typeId = roomTypeService.save(new RoomTypeReq(null, propertyId, "隔离用房型" + tag,
+                new BigDecimal("100.00"), 2, new BigDecimal("20.00"), null, 0, 0,
+                LocalTime.of(14, 0), LocalTime.of(12, 0))).getId();
+        long roomId = roomService.save(new RoomReq(null, propertyId, typeId, "R" + tag, 1, Room.ON_SALE)).getId();
+        return new long[]{typeId, roomId};
+    }
+
+    private long rateRuleIn(long propertyId) {
+        var saved = rateRuleService.save(new RateRuleReq(null, propertyId, null, "隔离用规则" + System.nanoTime(),
+                null, null, null, null, null, "MULTIPLY", new BigDecimal("1.2"), "ALL", 100, true));
+        return saved.getId();
+    }
+
+    private RateRuleReq rateRuleBody(long id, long propertyId) {
+        return new RateRuleReq(id, propertyId, null, "改写过的规则", null, null, null, null, null,
+                "MULTIPLY", new BigDecimal("1.5"), "ALL", 100, true);
+    }
+
+    /** 用内核直接推进到 SETTLED：HTTP 的入住/退房取 now()，会把测试变成一天里某些时段才跑得过。 */
+    private long settledBookingIn(long roomId) {
+        LocalDateTime start = LocalDateTime.now().minusHours(5);
+        LocalDateTime end = start.plusHours(2);
+        long id = kernel.createBooking(new CreateBookingCmd(roomId, "客人" + System.nanoTime(), null,
+                start, end, 0, 0, Booking.CONFIRMED, null, null, "HOURLY")).getId();
+        kernel.checkIn(id, start);
+        kernel.checkOut(id, end, 0);
+        return id;
+    }
+
+    private int putJson(MockHttpSession session, String url, Object body) throws Exception {
+        return codeOf(session, put(url).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(body)));
+    }
+
+    /** 无请求体的 POST（结算这种" just do it"动作）。 */
+    private int postEmpty(MockHttpSession session, String url) throws Exception {
+        return codeOf(session, post(url));
+    }
+
+    private int codeOf(MockHttpSession session, String method, String url) throws Exception {
+        return codeOf(session, "DELETE".equals(method) ? delete(url) : get(url));
+    }
 
     private static LocalDateTime at(int hour) {
         return LocalDate.now().plusDays(1).atTime(hour, 0);

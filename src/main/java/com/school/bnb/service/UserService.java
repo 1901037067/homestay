@@ -101,9 +101,14 @@ public class UserService {
         }
         boolean wasManager = existing.getPropertyId() == null && Boolean.TRUE.equals(existing.getEnabled());
         boolean staysManager = req.propertyId() == null && enabled;
-        if (wasManager && !staysManager && countEnabledManagers() <= 1) {
-            throw new BizException(ErrorCode.BAD_REQUEST,
-                    "系统里至少要留一个可用的店长账号：这个改动会让没有人能管账号");
+        if (wasManager && !staysManager) {
+            // 数店长与更新必须在同一把锁的两边。原来的"先 count 再 update"是 check-then-act：
+            // 两个店长同时互相降级，两边都数到 2、都通过检查，结果一个店长都不剩（第十轮审阅第 4 条）
+            List<Long> managers = userMapper.lockEnabledManagers();
+            if (managers.size() <= 1) {
+                throw new BizException(ErrorCode.BAD_REQUEST,
+                        "系统里至少要留一个可用的店长账号：这个改动会让没有人能管账号");
+            }
         }
 
         SysUser u = new SysUser();
@@ -148,13 +153,6 @@ public class UserService {
         List<SysUser> rows = userMapper.selectList(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, username));
         return rows.stream().anyMatch(r -> !r.getId().equals(selfId));
-    }
-
-    private long countEnabledManagers() {
-        Long n = userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
-                .isNull(SysUser::getPropertyId)
-                .eq(SysUser::getEnabled, true));
-        return n == null ? 0 : n;
     }
 
     private String propertyName(Long propertyId) {

@@ -52,17 +52,19 @@ public class RoomTypeService {
                 .toList();
     }
 
+    /** 按 id 取一个房型，<b>并校验它属于当前账号可见的民宿</b>。 */
     public RoomType require(Long id) {
         RoomType t = roomTypeMapper.selectById(id);
         if (t == null) {
             throw new BizException(ErrorCode.ROOM_TYPE_NOT_FOUND, "房型不存在: " + id);
         }
+        scope.requireVisible(t.getPropertyId());
         return t;
     }
 
     @Transactional
     public RoomType save(RoomTypeReq req) {
-        propertyService.requireVisible(req.propertyId());
+        propertyService.require(req.propertyId());
         RoomType existing = req.id() == null ? null : require(req.id());
         if (existing != null && !existing.getPropertyId().equals(req.propertyId())) {
             // 改挂到别的民宿会留下"房间属于 A 店、房型属于 B 店"的错配。

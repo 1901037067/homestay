@@ -412,6 +412,9 @@ public class BookingService {
         Set<Long> roomIds = bookings.stream().map(Booking::getRoomId).collect(Collectors.toSet());
         Map<Long, Room> rooms = roomMapper.selectBatchIds(roomIds).stream()
                 .collect(Collectors.toMap(Room::getId, r -> r));
+        // 翻译视图之前先过一遍归属：GET /api/bookings/{id} 走的是 kernel.require + toVOs，
+        // 没有这一步，前台报一个别店的订单号就能读到客人姓名、电话与金额
+        rooms.values().forEach(r -> scope.requireVisible(r.getPropertyId()));
         Set<Long> typeIds = rooms.values().stream().map(Room::getRoomTypeId).collect(Collectors.toSet());
         Set<Long> propIds = rooms.values().stream().map(Room::getPropertyId).collect(Collectors.toSet());
         Map<Long, RoomType> types = typeIds.isEmpty() ? Map.of()

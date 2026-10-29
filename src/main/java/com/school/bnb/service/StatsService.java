@@ -33,7 +33,7 @@ public class StatsService {
     }
 
     public StatsVO report(Long propertyId, LocalDate from, LocalDate to) {
-        Property p = propertyService.requireVisible(propertyId);
+        Property p = propertyService.require(propertyId);
         LocalDate end = to == null ? LocalDate.now() : to;
         LocalDate start = from == null ? end.minusDays(DEFAULT_DAYS - 1L) : from;
         // 先校验再取数：区间颠倒或超长时，不该先扫一遍库再让聚合器抛异常
