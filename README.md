@@ -101,6 +101,32 @@ docker compose --profile app up -d --build   # MySQL + 后端 + 前端（nginx �
 前端不直连 8080，开发时走 Vite dev proxy、部署时走 nginx 反代，两条路都是同源 cookie，
 后端不必开 CORS 白名单。
 
+### 从空库演练一次（不碰真栈数据）
+
+答辩前最该做的一次：**空数据卷 → 迁移 → 灌演示数据 → 真实结算 → 看账单/报表 → 重启再查**。
+用独立 project 名 + 覆盖文件，容器名与端口全部错开，真栈的卷不会被删：
+
+```bash
+# 1) 备份真栈（可选）
+docker compose exec -T mysql mysqldump -uroot -pbnb_dev_123 --single-transaction --databases bnb > bnb-backup.sql
+
+# 2) 空卷起演练栈（3307 / 8081 / 5174）
+docker compose -p bnb-drill -f docker-compose.yml -f docker-compose.drill.yml --profile app up -d --build
+
+# 3) 灌演示数据 + 真实结算（注意都带 -p bnb-drill）
+docker compose -p bnb-drill -f docker-compose.yml -f docker-compose.drill.yml exec -T mysql   mysql --default-character-set=utf8mb4 -uroot -pbnb_dev_123 bnb < db/demo/seed_demo.sql
+API=http://127.0.0.1:8081 bash scripts/settle-demo.sh
+
+# 4) 拆掉演练栈（-v 只删 bnb-drill_ 的卷）
+docker compose -p bnb-drill -f docker-compose.yml -f docker-compose.drill.yml --profile app down -v
+```
+
+`docker-compose.drill.yml` 里用了 `!override` 换端口 —— compose 对**列表**是拼接不是替换，
+不写这个会把真栈的 3306 一起绑上、直接起不来（第一次演练就踩到了）。
+
+2026-10-29 实测一遍：空库应用 7 个迁移 → 灌数据自检通过（中文 3 字符、历史无残留占用）→
+13 笔结算全部成功 → 账单快照 total 98.00、报表营收 2128.80/17 单 → 重启后数字不变 → 拆栈后真栈 22 单 13 账单完好。
+
 > 开发（热更新）与部署（容器）**不要同时跑**：两者都占 8080/5173。
 > 切回开发时先 `docker compose --profile app stop backend frontend`（mysql 留着）。
 

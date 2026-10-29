@@ -1,0 +1,32 @@
+# 部署演练用的覆盖文件 —— 与真栈完全隔离。
+#
+#   docker compose -p bnb-drill -f docker-compose.yml -f docker-compose.drill.yml \
+#     --profile app up -d --build
+#
+# 为什么不用 `down -v`：那会删掉 homeastay_bnb-mysql-data（真栈的演示数据卷）。
+# 这里换 project 名就换了一套卷（bnb-drill_bnb-mysql-data），
+# 容器名与端口也全部错开，两个栈可以同时在跑。
+#
+# 演练完清理：
+#   docker compose -p bnb-drill -f docker-compose.yml -f docker-compose.drill.yml \
+#     --profile app down -v
+services:
+  mysql:
+    container_name: bnb-drill-mysql
+    # !override：compose 对列表是<b>拼接</b>而不是替换，直接写 ports 会和真栈的 3306 撞车
+    ports: !override
+      - "3307:3306"
+
+  backend:
+    container_name: bnb-drill-backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DB: bnb
+    ports: !override
+      - "8081:8080"
+
+  frontend:
+    container_name: bnb-drill-frontend
+    ports: !override
+      - "5174:80"
