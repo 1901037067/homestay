@@ -30,63 +30,63 @@ delete from booking;
 insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, end_time,
                     actual_check_in, actual_check_out, status, amount, created_by) values
   -- 6 天前，钟点房晚间
-  ('D20260001', 1, '李文博', '138_0000_0001', date_sub(curdate(), interval 6 day) + interval 19 hour,
+  ('D20260001', 1, '许雷雷', '138_0000_0001', date_sub(curdate(), interval 6 day) + interval 19 hour,
    date_sub(curdate(), interval 6 day) + interval 23 hour,
    date_sub(curdate(), interval 6 day) + interval 19 hour + interval 4 minute,
    date_sub(curdate(), interval 6 day) + interval 23 hour, 'CHECKED_OUT', 0.00, 1),
-  ('D20260002', 5, '王思远', '138_0000_0002', date_sub(curdate(), interval 6 day) + interval 20 hour,
+  ('D20260002', 5, '蔡徐坤', '138_0000_0002', date_sub(curdate(), interval 6 day) + interval 20 hour,
    date_sub(curdate(), interval 6 day) + interval 23 hour + interval 30 minute,
    date_sub(curdate(), interval 6 day) + interval 20 hour,
    date_sub(curdate(), interval 6 day) + interval 23 hour + interval 30 minute, 'CHECKED_OUT', 0.00, 2),
   -- 5 天前，跨零点全日房（营业日切割的用例）
-  ('D20260003', 8, '张轶群', '138_0000_0003', date_sub(curdate(), interval 5 day) + interval 14 hour,
+  ('D20260003', 8, '吕郑豪', '138_0000_0003', date_sub(curdate(), interval 5 day) + interval 14 hour,
    date_sub(curdate(), interval 4 day) + interval 12 hour,
    date_sub(curdate(), interval 5 day) + interval 14 hour + interval 11 minute,
    date_sub(curdate(), interval 4 day) + interval 12 hour + interval 20 minute, 'CHECKED_OUT', 0.00, 1),
-  ('D20260004', 2, '陈可欣', '138_0000_0004', date_sub(curdate(), interval 5 day) + interval 13 hour,
+  ('D20260004', 2, '苏麒芳', '138_0000_0004', date_sub(curdate(), interval 5 day) + interval 13 hour,
    date_sub(curdate(), interval 5 day) + interval 17 hour,
    date_sub(curdate(), interval 5 day) + interval 13 hour,
    date_sub(curdate(), interval 5 day) + interval 17 hour, 'CHECKED_OUT', 0.00, 2),
   -- 4 天前，白天冷时段
-  ('D20260005', 3, '刘承宇', '138_0000_0005', date_sub(curdate(), interval 4 day) + interval 10 hour,
+  ('D20260005', 3, '陈泽', '138_0000_0005', date_sub(curdate(), interval 4 day) + interval 10 hour,
    date_sub(curdate(), interval 4 day) + interval 13 hour,
    date_sub(curdate(), interval 4 day) + interval 10 hour,
    date_sub(curdate(), interval 4 day) + interval 13 hour, 'CHECKED_OUT', 0.00, 1),
-  ('D20260006', 14, '赵梦洁', '138_0000_0006', date_sub(curdate(), interval 4 day) + interval 14 hour,
+  ('D20260006', 14, '蒋介石', '138_0000_0006', date_sub(curdate(), interval 4 day) + interval 14 hour,
    date_sub(curdate(), interval 3 day) + interval 12 hour,
    date_sub(curdate(), interval 4 day) + interval 14 hour,
    date_sub(curdate(), interval 3 day) + interval 12 hour, 'CHECKED_OUT', 0.00, 2),
   -- 3 天前，爽约取消（既不占位也不计营收）
-  ('D20260007', 6, '孙志豪', '138_0000_0007', date_sub(curdate(), interval 3 day) + interval 21 hour,
+  ('D20260007', 6, '姜萍', '138_0000_0007', date_sub(curdate(), interval 3 day) + interval 21 hour,
    date_sub(curdate(), interval 3 day) + interval 23 hour + interval 30 minute,
    null, null, 'CANCELLED', 0.00, 2),
-  ('D20260008', 9, '周雅静', '138_0000_0008', date_sub(curdate(), interval 3 day) + interval 19 hour,
+  ('D20260008', 9, '汪精卫', '138_0000_0008', date_sub(curdate(), interval 3 day) + interval 19 hour,
    date_sub(curdate(), interval 3 day) + interval 22 hour,
    date_sub(curdate(), interval 3 day) + interval 19 hour,
    date_sub(curdate(), interval 3 day) + interval 22 hour, 'CHECKED_OUT', 0.00, 1),
   -- 2 天前
-  ('D20260009', 10, '吴凯旋', '138_0000_0009', date_sub(curdate(), interval 2 day) + interval 20 hour,
+  ('D20260009', 10, '常小雨', '138_0000_0009', date_sub(curdate(), interval 2 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 12 hour,
    date_sub(curdate(), interval 2 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 12 hour, 'CHECKED_OUT', 0.00, 1),
-  ('D20260010', 4, '郑晓彤', '138_0000_0010', date_sub(curdate(), interval 2 day) + interval 15 hour,
+  ('D20260010', 4, '科比', '138_0000_0010', date_sub(curdate(), interval 2 day) + interval 15 hour,
    date_sub(curdate(), interval 2 day) + interval 19 hour,
    date_sub(curdate(), interval 2 day) + interval 15 hour,
    date_sub(curdate(), interval 2 day) + interval 19 hour, 'CHECKED_OUT', 0.00, 2),
   -- 昨天，晚间密集（热力图高峰）
-  ('D20260011', 1, '马若涵', '138_0000_0011', date_sub(curdate(), interval 1 day) + interval 18 hour,
+  ('D20260011', 1, '詹姆斯', '138_0000_0011', date_sub(curdate(), interval 1 day) + interval 18 hour,
    date_sub(curdate(), interval 1 day) + interval 22 hour,
    date_sub(curdate(), interval 1 day) + interval 18 hour,
    date_sub(curdate(), interval 1 day) + interval 22 hour, 'CHECKED_OUT', 0.00, 1),
-  ('D20260012', 2, '胡泽宇', '138_0000_0012', date_sub(curdate(), interval 1 day) + interval 19 hour,
+  ('D20260012', 2, '王志宇', '138_0000_0012', date_sub(curdate(), interval 1 day) + interval 19 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour,
    date_sub(curdate(), interval 1 day) + interval 19 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour, 'CHECKED_OUT', 0.00, 1),
-  ('D20260013', 5, '林雨薇', '138_0000_0013', date_sub(curdate(), interval 1 day) + interval 20 hour,
+  ('D20260013', 5, '吴亦凡', '138_0000_0013', date_sub(curdate(), interval 1 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour + interval 30 minute,
    date_sub(curdate(), interval 1 day) + interval 20 hour,
    date_sub(curdate(), interval 1 day) + interval 23 hour + interval 30 minute, 'CHECKED_OUT', 0.00, 2),
-  ('D20260014', 15, '何书豪', '138_0000_0014', date_sub(curdate(), interval 1 day) + interval 14 hour,
+  ('D20260014', 15, '贾乃亮', '138_0000_0014', date_sub(curdate(), interval 1 day) + interval 14 hour,
    date_sub(curdate(), interval 0 day) + interval 12 hour,
    date_sub(curdate(), interval 1 day) + interval 14 hour,
    curdate() + interval 12 hour, 'CHECKED_OUT', 588.00, 2);
@@ -97,9 +97,9 @@ insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, e
 -- ---------------------------------------------------------------------------
 insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, end_time,
                      actual_check_in, status, amount, created_by) values
-  ('T20260101', 3, '许晨阳', '138_0000_0101', curdate() + interval 8 hour, curdate() + interval 12 hour,
+  ('T20260101', 3, '李小璐', '138_0000_0101', curdate() + interval 8 hour, curdate() + interval 12 hour,
    curdate() + interval 8 hour + interval 3 minute, 'IN_USE', 148.00, 1),
-  ('T20260102', 11, '范可昕', '138_0000_0102', curdate() + interval 14 hour,
+  ('T20260102', 11, '张国胜', '138_0000_0102', curdate() + interval 14 hour,
    date_add(curdate(), interval 1 day) + interval 12 hour,
    curdate() + interval 14 hour, 'IN_USE', 388.00, 1);
 
@@ -118,15 +118,15 @@ from booking b where b.booking_no = 'T20260102';
 -- ---------------------------------------------------------------------------
 insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, end_time,
                      status, amount, created_by) values
-  ('F20260201', 1, '邓凯文', '138_0000_0201', curdate() + interval 18 hour,
+  ('F20260201', 1, '范小勤', '138_0000_0201', curdate() + interval 18 hour,
    curdate() + interval 22 hour, 'CONFIRMED', 148.00, 1),
-  ('F20260202', 2, '曹素菲', '138_0000_0202', curdate() + interval 19 hour,
+  ('F20260202', 2, '李占良', '138_0000_0202', curdate() + interval 19 hour,
    curdate() + interval 23 hour + interval 30 minute, 'CONFIRMED', 168.00, 2),
-  ('F20260203', 5, '彭于晏', '138_0000_0203', curdate() + interval 19 hour,
+  ('F20260203', 5, '王扁', '138_0000_0203', curdate() + interval 19 hour,
    curdate() + interval 23 hour, 'CONFIRMED', 218.00, 1),
-  ('F20260204', 14, '苏明远', '138_0000_0204', curdate() + interval 14 hour,
+  ('F20260204', 14, '张庆杨', '138_0000_0204', curdate() + interval 14 hour,
    date_add(curdate(), interval 1 day) + interval 12 hour, 'CONFIRMED', 588.00, 2),
-  ('F20260205', 6, '贾若琪', '138_0000_0205', date_add(curdate(), interval 1 day) + interval 20 hour,
+  ('F20260205', 6, '张开杨', '138_0000_0205', date_add(curdate(), interval 1 day) + interval 20 hour,
    date_add(curdate(), interval 1 day) + interval 23 hour, 'CONFIRMED', 188.00, 1);
 
 insert into occupancy (room_id, booking_id, start_time, end_time, block_start, block_end, kind)
@@ -144,7 +144,7 @@ where b.booking_no in ('F20260201', 'F20260202', 'F20260203', 'F20260204', 'F202
 -- ---------------------------------------------------------------------------
 insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, end_time,
                      status, hold_expire_at, amount, created_by) values
-  ('H20260301', 7, '临时预占', null, curdate() + interval 21 hour, curdate() + interval 23 hour,
+  ('H20260301', 7, '特朗普', null, curdate() + interval 21 hour, curdate() + interval 23 hour,
    'HELD', date_add(now(), interval 30 minute), 0.00, 2);
 
 insert into occupancy (room_id, booking_id, start_time, end_time, block_start, block_end, kind)
@@ -181,6 +181,6 @@ union all
 select '当前占用行数', count(1) from occupancy
 union all
 -- 编码自检用长度而不是打印中文：cp936 终端下中文本来就花，长度是终端无关的
-select '李文博字符数（必须为 3；出现 9 说明客户端按 latin1 读了 UTF-8 文件）',
+select '许雷雷字符数（必须为 3；出现 9 说明客户端按 latin1 读了 UTF-8 文件）',
        char_length(guest_name)
 from booking where booking_no = 'D20260001';

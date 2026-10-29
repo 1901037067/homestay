@@ -73,32 +73,52 @@ public class BookingKernel {
         return createOrReplay(cmd).booking();
     }
 
+    /**
+     * 幂等回放的<b>只读探测</b>，供服务层在跑"这间房现在还能不能卖"之前先问一次。
+     *
+     * <p>顺序很要紧。重试的场景是"第一次提交其实成功了、只是响应超时"，而前台点重试时
+     * 距第一次已过去几分钟，其间房间可能被改成维修、房型可能调过 {@code minHours}。
+     * 若先跑可售性预判，重试就会收到 2003/3004 —— 前台以为"这单没开出去"，
+     * 可库里明明有一张，于是再开一张新的，房间被重复占用（审阅抓出）。
+     * <b>已经在库里成功过的请求，答案只能是那张原单，不能是"现在卖不了"。</b>
+     *
+     * <p>用不加锁的读：这里发生在锁房间行之前，加锁会反掉"房间行 → 订单行"的统一顺序。
+     * 探测漏了不影响正确性 —— {@link #createOrReplay} 锁后还会用当前读做权威判定。
+     */
+    public Booking replayOf(CreateBookingCmd cmd) {
+        String requestId = blankToNull(cmd.requestId());
+        if (requestId == null) {
+            return null;
+        }
+        Booking existing = bookingMapper.findByRequestId(requestId);
+        return existing != null && sameAsRequest(existing, cmd) ? existing : null;
+    }
+
     @Transactional
     public CreateOutcome createOrReplay(CreateBookingCmd cmd) {
         // 内核自己也要兜住非法区间 —— 它是最后一道防线，不能假设调用方校验过
         validateRange(cmd.startTime(), cmd.endTime());
 
-        // 1. 锁住房间行 → 同房间下单天然串行；同时用锁里的最新行复核状态。
-        //    BookingService 在锁外也判过一次状态（快速失败），但那是加锁前的快照：
-        //    期间若有人把房间改成维修，只靠那次判断就会把房间卖掉、而且这张单永远办不了入住
+        // 1. 锁住房间行 → 同房间下单天然串行。
+        //    锁必须在这一步而不是回放之前：统一顺序是"房间行 → 订单行"，
+        //    先锁订单行会和别人的下单/入住路径咬成死锁
         Room locked = roomMapper.selectForUpdate(cmd.roomId());
         if (locked == null) {
             throw new BizException(ErrorCode.ROOM_NOT_FOUND, "房间不存在: " + cmd.roomId());
         }
-        if (!Room.ON_SALE.equals(locked.getStatus())) {
-            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
-                    "房间 " + locked.getRoomNo() + " 当前状态 " + locked.getStatus() + "，不可售");
-        }
 
-        // 2. 幂等回放：同一 requestId 重复提交返回原单。放在锁之后，同房间的并发双击必然串行。
-        if (cmd.requestId() != null && !cmd.requestId().isBlank()) {
-            Booking existing = bookingMapper.findByRequestIdForUpdate(cmd.requestId());
+        // 2. 幂等回放：同一 requestId 重复提交返回原单。放在房间状态复核<b>之前</b> ——
+        //    重试要拿回的是"当时那一次的结果"，而当时的房间是在售的；
+        //    用现在的状态去否定一次已经成功的提交，只会把前台引向重复开单
+        String requestId = blankToNull(cmd.requestId());
+        if (requestId != null) {
+            Booking existing = bookingMapper.findByRequestIdForUpdate(requestId);
             if (existing != null) {
                 // 只认"同标识 + 同内容"。同标识不同内容不能回放 —— 典型场景是第一次提交其实
                 // 成功了但响应超时，前台在同一个弹窗里改了时段重试；直接回放旧单会让前端
                 // 把"新时段开单成功"报给用户，而库里存的是旧时段。
                 if (sameAsRequest(existing, cmd)) {
-                    log.info("幂等回放 requestId={} → booking {}", cmd.requestId(), existing.getBookingNo());
+                    log.info("幂等回放 requestId={} → booking {}", requestId, existing.getBookingNo());
                     return new CreateOutcome(existing, false);
                 }
                 throw new BizException(ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -106,15 +126,22 @@ public class BookingKernel {
             }
         }
 
-        // 3. 冲突检测：当前读，打在含缓冲的 block 区间上
+        // 3. 新单才复核房间状态。BookingService 在锁外也判过一次，但那是加锁前的快照：
+        //    期间若有人把房间改成维修，只靠那次判断就会把房间卖掉、而且这张单永远办不了入住
+        if (!Room.ON_SALE.equals(locked.getStatus())) {
+            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
+                    "房间 " + locked.getRoomNo() + " 当前状态 " + locked.getStatus() + "，不可售");
+        }
+
+        // 4. 冲突检测：当前读，打在含缓冲的 block 区间上
         LocalDateTime blockStart = cmd.startTime().minusMinutes(cmd.cleanBeforeMinutes());
         LocalDateTime blockEnd = cmd.endTime().plusMinutes(cmd.cleanAfterMinutes());
         requireNoConflict(cmd.roomId(), blockStart, blockEnd);
 
-        // 4. 落库 booking + occupancy，同一事务
+        // 5. 落库 booking + occupancy，同一事务
         Booking booking = new Booking();
         booking.setBookingNo(nextBookingNo());
-        booking.setRequestId(blankToNull(cmd.requestId()));
+        booking.setRequestId(requestId);
         booking.setSaleType(cmd.saleType() == null ? SaleType.HOURLY.name() : cmd.saleType());
         booking.setRoomId(cmd.roomId());
         booking.setGuestName(cmd.guestName());
@@ -290,6 +317,26 @@ public class BookingKernel {
     }
 
     /**
+     * 退房结果。带着<b>实际写进去的</b>清扫区间，而不是调用方传进来的配置值。
+     *
+     * <p>为什么要专门回传：配置 30 分钟的清扫窗口会被下一单的开始时刻截断，挤到底时长度是 0。
+     * 操作日志若照抄配置，就写下了一句没发生过的话 —— 而日志是审计凭证，
+     * "日志说转清扫 30 分钟、日历上那一格却什么都没有"这种对不上，追查时比漏记更费时间。
+     */
+    public record CheckOutOutcome(Booking booking, LocalDateTime cleaningStart, LocalDateTime cleaningEnd) {
+
+        /** 本次退房是否留下了待确认的清扫行。零长窗口同样算"留下了"（它是一件待办，不是一个时段）。 */
+        public boolean needsCleaning() {
+            return cleaningEnd != null;
+        }
+
+        /** 清扫窗口实际挡住了多少分钟。 */
+        public long actualMinutes() {
+            return cleaningEnd == null ? 0 : Duration.between(cleaningStart, cleaningEnd).toMinutes();
+        }
+    }
+
+    /**
      * 退房。<b>不是删空，而是把 ROOM 行换成 CLEANING 行</b>：
      * {@code [实际退房时刻, +clean_after_minutes]}。
      *
@@ -300,7 +347,7 @@ public class BookingKernel {
      * <p>缓冲时长仍来自房型配置，且 ROOM 行已删除，不存在 B1/B2 双算。
      */
     @Transactional
-    public Booking checkOut(Long bookingId, LocalDateTime actual, int cleanAfterMinutes) {
+    public CheckOutOutcome checkOut(Long bookingId, LocalDateTime actual, int cleanAfterMinutes) {
         Booking booking = require(bookingId);
         roomMapper.selectForUpdate(booking.getRoomId());
         LocalDateTime at = actual == null ? LocalDateTime.now() : actual;
@@ -308,8 +355,9 @@ public class BookingKernel {
             throw illegal(booking.getStatus(), Booking.CHECKED_OUT);
         }
         occupancyMapper.deleteByBookingId(bookingId);
+        LocalDateTime cleanEnd = null;
         if (cleanAfterMinutes > 0) {
-            LocalDateTime cleanEnd = at.plusMinutes(cleanAfterMinutes);
+            cleanEnd = at.plusMinutes(cleanAfterMinutes);
             // 清扫窗口不能压到下一单头上：晚退房把清扫挤进下一单时段时截断到下一段开始之前。
             // 不截断就会插出一对重叠的占用行，而"同房间行互不重叠"是冲突检测、日历、报表的共同前提
             LocalDateTime nextStart = occupancyMapper.findNextBlockStart(booking.getRoomId(), at);
@@ -337,7 +385,7 @@ public class BookingKernel {
             cleaning.setKind(Occupancy.KIND_CLEANING);
             occupancyMapper.insert(cleaning);
         }
-        return require(bookingId);
+        return new CheckOutOutcome(require(bookingId), cleanAfterMinutes > 0 ? at : null, cleanEnd);
     }
 
     /**

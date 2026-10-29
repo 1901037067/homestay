@@ -111,4 +111,15 @@ public interface BookingMapper extends BaseMapper<Booking> {
      */
     @Select("select * from booking where request_id = #{requestId} for update")
     Booking findByRequestIdForUpdate(@Param("requestId") String requestId);
+
+    /**
+     * 同一把键的<b>只读</b>版本，只给 {@code BookingService} 做回放探测用。
+     *
+     * <p>为什么单开一条不加锁的：服务层的探测发生在锁房间行<b>之前</b>，若这里也用
+     * {@code for update}，写路径的加锁顺序就变成"订单行 → 房间行"，与内核约定的
+     * "房间行 → 订单行"正好相反，并发下会死锁。快路径读不到（另一笔还没提交）不要紧 ——
+     * 权威判定仍在内核里，锁后用当前读再做一次。
+     */
+    @Select("select * from booking where request_id = #{requestId} limit 1")
+    Booking findByRequestId(@Param("requestId") String requestId);
 }

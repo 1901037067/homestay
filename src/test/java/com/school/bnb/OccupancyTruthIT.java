@@ -237,8 +237,63 @@ class OccupancyTruthIT extends AbstractMysqlIT {
                 .isEqualTo(ErrorCode.IDEMPOTENCY_CONFLICT);
     }
 
-    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）
+    // ---------------- ⑤ 续：重试要拿回原单，不能被"现在还能不能卖"顶掉（第九轮审阅第 4 条）
+
     @Test
+    @DisplayName("⑤ 第一次提交成功后改了房型最短时长：重试必须拿回原单，而不是收到策略报错")
+    void retryAfterPolicyChangeReturnsOriginalOrder() {
+        Room r = room(2, 0, 0);
+        String rid = "REQ-RETRY-" + System.nanoTime();
+        BookingVO first = bookingService.create(new CreateBookingReq(r.getId(), "重试客人", null,
+                TODAY.withHour(9), TODAY.withHour(12), Booking.CONFIRMED, null, "HOURLY", rid));
+
+        // 运营把最短时长从 2 小时调到 4 小时 —— 这张 2 小时的单"按现在规矩"已经不能卖了。
+        // 但重试要回答的是"上一次那单开成功没有"，答案是开成功了，不是"现在卖不了"
+        jdbc.update("update room_type set min_hours = 4 where id = ?", r.getRoomTypeId());
+        assertThatThrownBy(() -> bookingService.create(new CreateBookingReq(r.getId(), "新客人", null,
+                TODAY.withHour(9), TODAY.withHour(12), Booking.CONFIRMED, null, "HOURLY", null)))
+                .as("夹具自证：新单确实会被最短时长挡住，否则这条测试什么都没测到")
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
+
+        BookingVO replay = bookingService.create(new CreateBookingReq(r.getId(), "重试客人", null,
+                TODAY.withHour(9), TODAY.withHour(12), Booking.CONFIRMED, null, "HOURLY", rid));
+
+        assertThat(replay.id()).isEqualTo(first.id());
+        assertThat(occupancyRows(r.getId()))
+                .as("前台以为没开出去而再开一张，就会同一时段占两次 —— 这条测的就是那个重复")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("⑤ 重试时房间已被改成不可售：同样拿回原单（内核锁后复核也要排在回放之后）")
+    void retryAfterRoomTakenOfflineReturnsOriginalOrder() {
+        Room r = room(2, 0, 0);
+        String rid = "REQ-RETRY-OFF-" + System.nanoTime();
+        Booking first = kernel.createBooking(new CreateBookingCmd(r.getId(), "重试客人", null,
+                TODAY.withHour(9), TODAY.withHour(12), 0, 0, Booking.CONFIRMED, null, rid, "HOURLY"));
+
+        // 用 jdbc 而不是 roomService.changeStatus：那条路径有"有未完成订单不许下架"的守卫，
+        // 建不出这个状态。这里要测的是内核里的顺序，直接把库改成"期间被人下架"的样子
+        jdbc.update("update room set status = 'OFFLINE' where id = ?", r.getId());
+
+        Booking replay = kernel.createOrReplay(new CreateBookingCmd(r.getId(), "重试客人", null,
+                TODAY.withHour(9), TODAY.withHour(12), 0, 0, Booking.CONFIRMED, null, rid, "HOURLY"))
+                .booking();
+        assertThat(replay.getId()).isEqualTo(first.getId());
+        assertThat(occupancyRows(r.getId())).isEqualTo(1);
+
+        // 而同一间房的新单照旧被下架状态挡住 —— 修复不能把闸门一起拆了
+        assertThatThrownBy(() -> kernel.createBooking(new CreateBookingCmd(r.getId(), "后来客人", null,
+                TODAY.withHour(14), TODAY.withHour(16), 0, 0, Booking.CONFIRMED, null,
+                "REQ-NEW-" + System.nanoTime(), "HOURLY")))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
+    }
+
+    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）    @Test
     @DisplayName("⑥ 提前入住也要跑冲突检测：不能把占用前扩进别人已订的时段")
     void earlyCheckInCannotOverlapExistingGuest() {
         Room r = room(2, 0, 0);
@@ -453,8 +508,45 @@ class OccupancyTruthIT extends AbstractMysqlIT {
                 .as("确认清扫后即可入住").isEqualTo(Booking.IN_USE);
     }
 
+        @Test
+    @DisplayName("清扫窗口被下一单截短时，操作日志写的是实际分钟数而不是配置值")
+    void checkOutLogReportsTheActualCleaningWindow() {
+        // 这条走 bookingService（退房时刻取 now()），因为日志就是服务层写的。
+        // 夹具全部相对 now()，所以凌晨与深夜跑不出同一天：那几个时段直接跳过，与测试目标无关
+        int hour = LocalDateTime.now().getHour();
+        org.junit.jupiter.api.Assumptions.assumeTrue(hour >= 4 && hour <= 20,
+                "本地时间 " + hour + " 点会造出跨天的钟点单，跳过");
+
+        Room r = room(2, 0, 30);                                        // 房型配了 30 分钟退房缓冲
+        LocalDateTime now = LocalDateTime.now();
+        // 顺序要紧：先订 B（10 分钟后开始），A 的清扫窗口才会正好压到它起点上
+        book(r.getId(), now.plusMinutes(10), now.plusMinutes(130), "HOURLY", null);
+        BookingVO a = book(r.getId(), now.minusHours(3), now.minusMinutes(40), "HOURLY", null);
+        kernel.checkIn(a.id(), now.minusHours(2));
+        assertThat(overlappingRows(r.getId())).isZero();
+
+        bookingService.checkOut(a.id());                                // 实际退房时刻 = now()
+
+        LocalDateTime cleanStart = jdbc.queryForObject(
+                "select block_start from occupancy where booking_id = ? and kind = 'CLEANING'",
+                LocalDateTime.class, a.id());
+        LocalDateTime cleanEnd = jdbc.queryForObject(
+                "select block_end from occupancy where booking_id = ? and kind = 'CLEANING'",
+                LocalDateTime.class, a.id());
+        long actual = java.time.Duration.between(cleanStart, cleanEnd).toMinutes();
+        assertThat(actual).as("夹具自证：窗口确实被截短了，否则这条测不到东西").isBetween(1L, 29L);
+
+        String summary = jdbc.queryForObject("""
+                select summary from operation_log
+                where action = 'BOOKING_CHECK_OUT' and entity = 'booking' and entity_id = ?
+                order by id desc limit 1
+                """, String.class, a.id());
+        assertThat(summary).contains("转清扫 " + actual + " 分钟");
+        assertThat(summary).doesNotContain("转清扫 30 分钟");
+    }
+
     @Test
-    @DisplayName("⑮ 内核下单时用锁内的最新房间状态复核 —— 锁外判过一次不算数")
+    @DisplayName("⑯ 内核下单时用锁内的最新房间状态复核 —— 锁外判过一次不算数")
     void createRechecksRoomStatusUnderLock() {
         Room r = room(2, 0, 0);
         jdbc.update("update room set status = 'MAINTENANCE' where id = ?", r.getId());

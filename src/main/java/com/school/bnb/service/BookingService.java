@@ -41,6 +41,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>分工：策略判断（能不能卖）在进锁之前先拒，便宜且失败得快；
  * 冲突判断（有没有被别人占了）留在内核、锁后当前读。<b>两件事不能互换位置</b> ——
  * 策略放锁内会拉长临界区，冲突放锁外就是超卖。
+ *
+ * <p>唯一的例外是<b>幂等回放</b>：它排在策略预判之前。重试要拿回的是"第一次已经成功"那张单，
+ * 而不是"此刻还能不能卖"的答案（见 {@code BookingKernel#replayOf}）。
  */
 @Service
 public class BookingService {
@@ -81,17 +84,27 @@ public class BookingService {
         if (!CREATABLE.contains(status)) {
             throw new BizException(ErrorCode.BAD_REQUEST, "下单状态只能是 HELD 或 CONFIRMED，收到 " + status);
         }
-        assertSellable(ctx, req.startTime(), req.endTime(), type);
-
         LocalDateTime holdExpire = Booking.HELD.equals(status)
                 ? LocalDateTime.now().plusMinutes(req.holdMinutes() == null ? DEFAULT_HOLD_MINUTES : req.holdMinutes())
                 : null;
-
-        BookingKernel.CreateOutcome outcome = kernel.createOrReplay(new CreateBookingCmd(
+        CreateBookingCmd cmd = new CreateBookingCmd(
                 ctx.room().getId(), req.guestName().trim(), req.guestPhone(),
                 req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes(),
-                status, holdExpire, req.requestId(), type.name()));
+                status, holdExpire, req.requestId(), type.name());
+
+        // 回放探测必须在可售性预判<b>之前</b>：重试意味着第一次已经写进库了，
+        // 而"第一次成功、响应超时、前台重试"这几分钟里房间很可能被改成维修、
+        // 房型可能调过最短时长。先跑预判，重试就会收到 2003/3004 —— 前台以为没开出去，
+        // 于是再开一张，同一间房被重复占用。已经在库里成功过的请求，答案只能是那张原单
+        Booking replay = kernel.replayOf(cmd);
+        if (replay != null) {
+            return toVO(replay, ctx);
+        }
+
+        assertSellable(ctx, req.startTime(), req.endTime(), type);
+
+        BookingKernel.CreateOutcome outcome = kernel.createOrReplay(cmd);
         Booking b = outcome.booking();
         // 幂等回放时**不能**再做这两件事：
         //   ① 写计费快照 —— 会用"现在的"房型配置覆盖掉下单时冻结的值，V7 白做；
@@ -171,15 +184,35 @@ public class BookingService {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
         Booking before = snapshot(b);
-        Booking after = kernel.checkOut(bookingId, LocalDateTime.now(),
-                ctx.type().getCleanAfterMinutes());
+        int configured = ctx.type().getCleanAfterMinutes();
+        // 秒对齐：datetime 列只存到秒，带着纳秒传进去，Java 里算出的窗口长度就和库里存的对不上
+        // （实测差 0.4 秒跨过分单位，日志写 9 分钟、行里量出 10 分钟）。既然要拿它算分钟写日志，就取整到秒
+        BookingKernel.CheckOutOutcome out = kernel.checkOut(bookingId, LocalDateTime.now().withNano(0), configured);
+        Booking after = out.booking();
         opLog.record("BOOKING_CHECK_OUT", "booking", bookingId,
                 String.format("%s 退房（%s），%s", ctx.room().getRoomNo(), after.getBookingNo(),
-                        ctx.type().getCleanAfterMinutes() > 0
-                                ? "转清扫 " + ctx.type().getCleanAfterMinutes() + " 分钟"
-                                : "无需清扫，直接可售"),
+                        cleaningNote(configured, out)),
                 before, after);
         return toVO(after, ctx);
+    }
+
+    /**
+     * 退房日志里清扫那一句的措辞。<b>以实际写下的清扫窗口为准，不照抄房型配置</b>：
+     * 配置 30 分钟、但下一单已经从 12:10 开始，那实际只挡住了 10 分钟；挤到零时窗口长度为 0
+     * 却仍然留下一行待确认的清扫（它是一件待办，不是一个时段）。日志写错，审计就成了误导。
+     */
+    static String cleaningNote(int configuredMinutes, BookingKernel.CheckOutOutcome out) {
+        if (!out.needsCleaning()) {
+            return "无需清扫，直接可售";
+        }
+        long actual = out.actualMinutes();
+        if (actual == configuredMinutes) {
+            return "转清扫 " + actual + " 分钟";
+        }
+        if (actual <= 0) {
+            return "清扫窗口被下一单挤成 0 分钟，仍需点「清扫完成」才放行";
+        }
+        return "转清扫 " + actual + " 分钟（配置 " + configuredMinutes + "，被下一单截断）";
     }
 
     /**

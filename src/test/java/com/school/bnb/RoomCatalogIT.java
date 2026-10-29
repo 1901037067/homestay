@@ -12,6 +12,7 @@ import com.school.bnb.dto.PropertyReq;
 import com.school.bnb.dto.RoomReq;
 import com.school.bnb.dto.RoomTypeReq;
 import com.school.bnb.entity.Booking;
+import com.school.bnb.entity.Property;
 import com.school.bnb.entity.Room;
 import com.school.bnb.service.PropertyService;
 import com.school.bnb.service.RoomService;
@@ -239,5 +240,45 @@ class RoomCatalogIT extends AbstractMysqlIT {
         // 04:00 这种整点是允许的（演示数据里就有）
         assertThat(propertyService.save(new PropertyReq(null, "整点店" + System.nanoTime(),
                 null, LocalTime.of(4, 0), LocalTime.of(9, 0), LocalTime.of(21, 0))).getId()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("改一家不存在的民宿要报错，不能静默返回成功")
+    void updateOfUnknownPropertyIsRejected() {
+        // updateById 对不存在的 id 影响 0 行、不抛异常，接口照样 200。
+        // 前端拿到 200 会提示"保存成功"，而库里什么都没变 —— 这类"假成功"比报错难查得多
+        long unknownId = 9_999_999L;
+        assertThatThrownBy(() -> propertyService.save(
+                new PropertyReq(unknownId, "不存在店", "某路 9 号",
+                        LocalTime.of(6, 0), LocalTime.of(8, 0), LocalTime.of(22, 0))))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.PROPERTY_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("只带名称的保存不会把这家店调过的营业时间重置成默认值")
+    void partialUpdateKeepsStoredBusinessHours() {
+        // 语义改成"以库里现值为底，只覆盖传来的字段"。改之前：三个 orDefault 一律回落到
+        // 硬编码默认，于是"只想改个名字"会把特意调成 05:00 的切割点悄悄改回 06:00 ——
+        // 而切割点决定报表分桶与日历归属，被重置后前天的营收会算到昨天头上
+        Property created = propertyService.save(new PropertyReq(null, "改点店" + System.nanoTime(),
+                "原地址", LocalTime.of(5, 0), LocalTime.of(7, 30), LocalTime.of(23, 0)));
+
+        Property renamed = propertyService.save(new PropertyReq(created.getId(), "改点店-新名",
+                null, null, null, null));
+
+        assertThat(renamed.getName()).isEqualTo("改点店-新名");
+        assertThat(renamed.getDayCutTime()).isEqualTo(LocalTime.of(5, 0));
+        assertThat(renamed.getOpenTime()).isEqualTo(LocalTime.of(7, 30));
+        assertThat(renamed.getCloseTime()).isEqualTo(LocalTime.of(23, 0));
+        assertThat(renamed.getAddress()).isEqualTo("原地址");
+
+        // 传了值就覆盖，别把"沿用现值"做成"永远忽略入参"
+        propertyService.save(new PropertyReq(created.getId(), "改点店-新名",
+                "新地址", LocalTime.of(4, 0), null, null));
+        assertThat(propertyService.require(created.getId()).getDayCutTime()).isEqualTo(LocalTime.of(4, 0));
+        assertThat(propertyService.require(created.getId()).getAddress()).isEqualTo("新地址");
+        assertThat(propertyService.require(created.getId()).getOpenTime()).isEqualTo(LocalTime.of(7, 30));
     }
 }

@@ -14,6 +14,7 @@ import com.school.bnb.vo.PropertyVO;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,11 +58,17 @@ public class PropertyService {
 
     @Transactional
     public Property save(PropertyReq req) {
+        // 更新走"以库里现值为底，只覆盖来的字段"。两个原因：
+        // 一是没有存在性检查时 updateById 对不存在的 id 影响 0 行、接口照样返回 200，
+        //        调用方以为改成功了（审阅抓出）；
+        // 二是前端表单可能只带名称与地址，若把缺省的营业参数一律回落到硬编码默认值，
+        //        一次"只想改名字"的保存会顺手把这家店调过的切割点重置成 06:00。
+        Property existing = req.id() == null ? null : require(req.id());
         Property p = new Property();
         p.setId(req.id());
         p.setName(req.name().trim());
-        p.setAddress(req.address());
-        p.setDayCutTime(orDefault(req.dayCutTime(), LocalTime.of(6, 0)));
+        p.setAddress(req.address() == null && existing != null ? existing.getAddress() : req.address());
+        p.setDayCutTime(orDefault(req.dayCutTime(), existing, Property::getDayCutTime, LocalTime.of(6, 0)));
         // 切割点必须是整点。报表与日历把"一小时"当横轴一格，营业日归属却按时刻精确推算；
         // 06:30 这种切割点会让"归哪一天"用分钟、"画在第几格"只能按整点算，两处对不上 ——
         // 实测 06:15 的单会被归到前一天、却画在属于新一天的格子里（审阅抓出的口径问题）。
@@ -71,8 +78,8 @@ public class PropertyService {
                     "营业日切割点必须是整点（如 06:00），收到 " + p.getDayCutTime()
                             + "；分钟级切割会让报表分桶与日历格子对不齐");
         }
-        p.setOpenTime(orDefault(req.openTime(), LocalTime.of(8, 0)));
-        p.setCloseTime(orDefault(req.closeTime(), LocalTime.of(22, 0)));
+        p.setOpenTime(orDefault(req.openTime(), existing, Property::getOpenTime, LocalTime.of(8, 0)));
+        p.setCloseTime(orDefault(req.closeTime(), existing, Property::getCloseTime, LocalTime.of(22, 0)));
         if (req.id() == null) {
             propertyMapper.insert(p);
         } else {
@@ -104,7 +111,16 @@ public class PropertyService {
         return n == null ? 0 : n;
     }
 
-    private static LocalTime orDefault(LocalTime v, LocalTime fallback) {
-        return v == null ? fallback : v;
+    private static LocalTime orDefault(LocalTime v, Property existing,
+                                       Function<Property, LocalTime> stored,
+                                       LocalTime hardDefault) {
+        if (v != null) {
+            return v;
+        }
+        if (existing == null) {
+            return hardDefault;
+        }
+        LocalTime storedValue = stored.apply(existing);
+        return storedValue == null ? hardDefault : storedValue;
     }
 }
