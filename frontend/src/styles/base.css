@@ -291,6 +291,14 @@ button,
     0 0 0 1px var(--bnb-accent) inset !important;
 }
 
+/* select 自带 min-height:32px 与 14px 字号，不吃本项目的 --el-component-size(40px)，
+   于是同一排筛选控件里 input 40/15px、select 32/14px 并排站 —— 看着就是"两种规格"。
+   在设计令牌层对齐，所有列表页的筛选栏一起受益 */
+.el-select .el-select__wrapper {
+  min-height: var(--el-component-size);
+  font-size: var(--el-font-size-base);
+}
+
 .el-card,
 .el-dialog,
 .el-drawer {

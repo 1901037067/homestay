@@ -1,12 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">订单</div>
-        <div class="bnb-page__sub">
-          房态日历只看今天，这里看所有 —— 退房后没来得及结算的单，靠这一页找回
-        </div>
-      </div>
+      <div class="bnb-page__title">订单</div>
       <el-button :loading="loading" @click="load">
         <el-icon><Refresh /></el-icon>刷新
       </el-button>
@@ -15,14 +10,14 @@
     <div class="bnb-card">
       <div class="bnb-card__head">
         <div class="bnb-toolbar">
-          <el-select v-model="query.status" placeholder="全部状态" clearable style="width: 150px" @change="reload">
+          <el-select v-model="query.status" placeholder="全部状态" clearable style="width: 170px" @change="reload">
             <el-option v-for="s in STATUSES" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
           <el-input
             v-model="query.keyword"
             placeholder="客人或单号"
             clearable
-            style="width: 200px"
+            style="width: 170px"
             @keyup.enter="reload"
             @clear="reload"
           />
@@ -209,9 +204,24 @@ onMounted(load)
   color: var(--bnb-danger);
   font-weight: 500;
 }
+/* 这一枚筛选开关和旁边的 el-select / el-input 排在同一条工具栏里，
+   尺寸必须按 Element 的控件档位对齐（--el-component-size=40px），
+   否则同一行会出现"两个高盒子夹一个矮胶囊"的错位 */
 .bnb-toolbar button.bnb-segmented__item {
+  height: var(--el-component-size);
+  padding: 0 16px;
   border: 1px solid var(--el-border-color);
+  border-radius: var(--bnb-radius-sm);
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  font-size: var(--el-font-size-base);
   cursor: pointer;
-  font: inherit;
+}
+
+.bnb-toolbar button.bnb-segmented__item.is-active {
+  border-color: var(--bnb-accent);
+  background: color-mix(in srgb, var(--bnb-accent) 10%, transparent);
+  color: var(--bnb-accent);
+  box-shadow: none;
 }
 </style>
