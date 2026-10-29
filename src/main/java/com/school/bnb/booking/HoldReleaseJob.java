@@ -15,6 +15,10 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+// 能关掉是给测试用的：集成测试共享一个库、每个上下文都会起这个每 60 秒一次的后台任务，
+// 而它会在断言之间悄悄释放预占单 —— 那是不必要的非确定性来源
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        name = "bnb.hold.release-enabled", havingValue = "true", matchIfMissing = true)
 public class HoldReleaseJob {
 
     private final BookingKernel kernel;

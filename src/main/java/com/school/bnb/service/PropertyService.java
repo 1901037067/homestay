@@ -76,7 +76,6 @@ public class PropertyService {
         if (req.id() == null) {
             propertyMapper.insert(p);
         } else {
-            require(req.id());
             propertyMapper.updateById(p);
         }
         return p;

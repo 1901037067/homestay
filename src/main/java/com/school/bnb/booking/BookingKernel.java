@@ -59,8 +59,22 @@ public class BookingKernel {
 
     // ---------------------------------------------------------------- 下单
 
+    /**
+     * 下单结果。<b>要区分"新开的"与"幂等回放的"</b>：
+     * 回放时调用方不能再写计费快照（那会拿现在的房型配置覆盖下单时冻结的值），
+     * 也不能再记一条开单日志（同一张单出现两条 CREATE）。
+     */
+    public record CreateOutcome(Booking booking, boolean created) {
+    }
+
+    /** 只为测试与内部调用保留的简写；正式入口请用 {@link #createOrReplay}。 */
     @Transactional
     public Booking createBooking(CreateBookingCmd cmd) {
+        return createOrReplay(cmd).booking();
+    }
+
+    @Transactional
+    public CreateOutcome createOrReplay(CreateBookingCmd cmd) {
         // 内核自己也要兜住非法区间 —— 它是最后一道防线，不能假设调用方校验过
         validateRange(cmd.startTime(), cmd.endTime());
 
@@ -85,7 +99,7 @@ public class BookingKernel {
                 // 把"新时段开单成功"报给用户，而库里存的是旧时段。
                 if (sameAsRequest(existing, cmd)) {
                     log.info("幂等回放 requestId={} → booking {}", cmd.requestId(), existing.getBookingNo());
-                    return existing;
+                    return new CreateOutcome(existing, false);
                 }
                 throw new BizException(ErrorCode.IDEMPOTENCY_CONFLICT,
                         "该请求已开出一张不同内容的订单（" + existing.getBookingNo() + "），请重新发起");
@@ -116,7 +130,7 @@ public class BookingKernel {
         writeOccupancy(booking.getId(), cmd.roomId(), cmd.startTime(), cmd.endTime(), blockStart, blockEnd);
         log.info("下单成功 booking={} room={} [{}, {})", booking.getBookingNo(), cmd.roomId(),
                 cmd.startTime(), cmd.endTime());
-        return booking;
+        return new CreateOutcome(booking, true);
     }
 
     // ------------------------------------------------- 改期 / 加时（最高危）
@@ -302,22 +316,26 @@ public class BookingKernel {
             if (nextStart != null && nextStart.isBefore(cleanEnd)) {
                 cleanEnd = nextStart;
             }
-            if (cleanEnd.isAfter(at)) {
-                Occupancy cleaning = new Occupancy();
-                cleaning.setRoomId(booking.getRoomId());
-                cleaning.setBookingId(bookingId);
-                cleaning.setStartTime(at);
-                cleaning.setEndTime(cleanEnd);
-                cleaning.setBlockStart(at);
-                cleaning.setBlockEnd(cleanEnd);
-                cleaning.setKind(Occupancy.KIND_CLEANING);
-                occupancyMapper.insert(cleaning);
-            } else {
-                // 下一段占用已经开始了，清扫窗口被挤没了：不能假装房间已可售，也不能造重叠行，
-                // 只能落一条 warn 让前台按实际情况处理（改房/加急清扫）
-                log.warn("退房晚于下一段占用的开始时刻，清扫窗口被挤没 booking={} 房={} 下一段起于 {}",
+            if (!cleanEnd.isAfter(at)) {
+                // 下一段占用已经开始了，清扫窗口被挤成零。这里**必须仍然留下一条 CLEANING 行**：
+                // 清扫是"一件还没做完的事"，把行省掉等于同时省掉了三样东西 ——
+                // 日历上的待清扫块、前台的"清扫完成"按钮、以及挡下一单入住的闸门
+                // （客人还没走干净、房没打扫，下一单照样能办入住）。
+                // 零长区间在几何上不占任何时段（半开区间里它是空集），所以不会破坏"行不重叠"；
+                // 而冲突查询的 CLEANING 分支判的是 block_start，它照样从此刻起挡住后面的一切。
+                cleanEnd = at;
+                log.warn("退房晚于下一段占用的开始时刻，清扫窗口被挤成零 booking={} 房={} 下一段起于 {}",
                         booking.getBookingNo(), booking.getRoomId(), nextStart);
             }
+            Occupancy cleaning = new Occupancy();
+            cleaning.setRoomId(booking.getRoomId());
+            cleaning.setBookingId(bookingId);
+            cleaning.setStartTime(at);
+            cleaning.setEndTime(cleanEnd);
+            cleaning.setBlockStart(at);
+            cleaning.setBlockEnd(cleanEnd);
+            cleaning.setKind(Occupancy.KIND_CLEANING);
+            occupancyMapper.insert(cleaning);
         }
         return require(bookingId);
     }

@@ -67,7 +67,7 @@
       <div class="bnb-card__head">
         <span class="bnb-card__title">分时段热度</span>
         <span class="bnb-muted hint">
-          格子是"该小时有几位客人在住"；跨零点的单会落在两个营业日里
+          格子是"该小时有几间房被占住"（含预占与已确认）；跨零点的单会落在两个营业日里
         </span>
       </div>
       <div ref="heatEl" class="chart chart--heat" />
@@ -220,7 +220,7 @@ function render() {
   heatChart.setOption({
     grid: { left: 56, right: 20, top: 12, bottom: 42 },
     tooltip: {
-      formatter: (p) => `${days[p.value[1]]} ${String(hours[p.value[0]]).padStart(2, '0')}:00<br/>在住 ${p.value[2]} 间`
+      formatter: (p) => `${days[p.value[1]]} ${String(hours[p.value[0]]).padStart(2, '0')}:00<br/>占用 ${p.value[2]} 间`
     },
     xAxis: {
       type: 'category',

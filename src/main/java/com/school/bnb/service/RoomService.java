@@ -81,7 +81,10 @@ public class RoomService {
         if (!type.getPropertyId().equals(req.propertyId())) {
             throw new BizException(ErrorCode.BAD_REQUEST, "房型不属于所选民宿");
         }
-        String status = req.status() == null || req.status().isBlank() ? Room.ON_SALE : req.status();
+        // 更新时没给状态就沿用库里的值：否则只改房号的请求会把"维修中"悄悄改成"在售"
+        Room before = req.id() == null ? null : require(req.id());
+        String status = req.status() == null || req.status().isBlank()
+                ? (before == null ? Room.ON_SALE : before.getStatus()) : req.status();
         if (!STATUSES.contains(status)) {
             throw new BizException(ErrorCode.BAD_REQUEST, "状态不合法: " + status);
         }
@@ -96,7 +99,7 @@ public class RoomService {
         if (req.id() == null) {
             roomMapper.insert(r);
         } else {
-            Room existing = require(req.id());
+            Room existing = before;
             // 有订单的房间不许跨店改挂：报表与营收是按"房间当前所属民宿"归集的，
             // 改挂会把历史营收一起搬到另一家店 —— 对账时就成了凭空多出来的收入。
             // 与房型的处理保持一致（那条规则在 RoomTypeService 里）

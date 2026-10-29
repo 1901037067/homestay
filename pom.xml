@@ -145,6 +145,8 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!-- 测试里大量用 LocalDateTime.now()：不钉时区，换台 UTC 机器或 CI 上会整体漂 8 小时 -->
+                    <argLine>-Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8</argLine>
                 </configuration>
             </plugin>
             <plugin>

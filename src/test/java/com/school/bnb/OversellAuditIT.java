@@ -196,8 +196,13 @@ class OversellAuditIT extends AbstractMysqlIT {
                     BookingVO b = bookingService.create(new CreateBookingReq(
                             r.getId(), "并发客", null, S, E, Booking.CONFIRMED, null));
                     return "OK:" + b.bookingNo();
+                } catch (com.school.bnb.common.BizException bex) {
+                    // 区分"业务上正确地拒绝"与"系统出错"：死锁/超时也走 catch，
+                    // 混在一起会把 500 当成 3003 记进成功账
+                    return bex.getCode() == com.school.bnb.common.ErrorCode.ROOM_TIME_CONFLICT
+                            ? "CONFLICT" : "BIZ:" + bex.getCode();
                 } catch (Exception ex) {
-                    return "REJECT:" + ex.getClass().getSimpleName();
+                    return "ERROR:" + ex.getClass().getSimpleName();
                 }
             };
             var f1 = pool.submit(task);
@@ -208,6 +213,8 @@ class OversellAuditIT extends AbstractMysqlIT {
             pool.shutdownNow();
 
             long ok = (s1.startsWith("OK") ? 1 : 0) + (s2.startsWith("OK") ? 1 : 0);
+            long conflicts = (s1.equals("CONFLICT") ? 1 : 0) + (s2.equals("CONFLICT") ? 1 : 0);
+            assertThat(ok + conflicts).as("第 %d 轮：成功 + 冲突必须等于请求数（不许有异常）", i).isEqualTo(2);
             int rows = occupancyRows(r.getId());
             log.add("round " + i + " ok=" + ok + " rows=" + rows + " [" + s1 + " | " + s2 + "]");
             assertThat(rows).as("第 %d 轮：同一时段占用行数", i).isEqualTo(1);

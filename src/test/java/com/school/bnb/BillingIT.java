@@ -18,6 +18,7 @@ import com.school.bnb.entity.Room;
 import com.school.bnb.mapper.BillMapper;
 import com.school.bnb.mapper.BookingMapper;
 import com.school.bnb.service.PropertyService;
+import com.school.bnb.service.OperationLogService;
 import com.school.bnb.service.RateRuleService;
 import com.school.bnb.service.RoomService;
 import com.school.bnb.service.RoomTypeService;
@@ -65,6 +66,7 @@ class BillingIT extends AbstractMysqlIT {
     @Autowired RoomTypeService roomTypeService;
     @Autowired RoomService roomService;
     @Autowired RateRuleService rateRuleService;
+    @Autowired OperationLogService opLogService;
 
     // ------------------------------------------------------------------ 用例
 
@@ -316,7 +318,7 @@ class BillingIT extends AbstractMysqlIT {
 
         // 一条被"日期 + 星期 + 房型"三重限制框住的规则，此刻一块都不该命中
         rateRuleService.save(new RateRuleReq(null, room.getPropertyId(), room.getRoomTypeId(),
-                "元旦周末特价", LocalDate.of(2027, 1, 1), LocalDate.of(2027, 1, 2), List.of(6, 7),
+                "元旦周末特价", LocalDate.of(2099, 1, 1), LocalDate.of(2099, 1, 2), List.of(6, 7),
                 null, null, "OVERRIDE", new BigDecimal("50.00"), "ALL", 100, true));
         assertThat(total(session, id)).isEqualByComparingTo("120.00");
 
@@ -356,6 +358,31 @@ class BillingIT extends AbstractMysqlIT {
                 .as("结算也按快照").isEqualByComparingTo("120.00");
     }
 
+    @Test
+    @DisplayName("幂等回放不覆盖计费快照，也不重复记开单日志")
+    void replayDoesNotRewriteThePricingSnapshot() throws Exception {
+        MockHttpSession session = login();
+        Room room = room("100.00", 2, "20.00", 60);          // 起步 2 小时
+        String rid = "REQ-IDEM-" + System.nanoTime();
+        long id = bookingWithRequestId(session, room, 9, 12, rid);
+        assertThat(total(session, id)).isEqualByComparingTo("120.00");
+
+        // 改起步时长：若回放时重写快照，这张单会从 120 变成 100
+        Long typeId = room.getRoomTypeId();
+        var type = roomTypeService.require(typeId);
+        roomTypeService.save(new RoomTypeReq(typeId, type.getPropertyId(), type.getName(),
+                type.getBasePrice(), 3, type.getExtraHourPrice(), type.getChargeUnitMinutes(),
+                type.getCleanBeforeMinutes(), type.getCleanAfterMinutes(),
+                type.getFullDayStart(), type.getFullDayEnd()));
+
+        // 第一次提交成功但响应超时，前台用同一个 requestId 重试
+        assertThat(bookingWithRequestId(session, room, 9, 12, rid))
+                .as("回放返回原单").isEqualTo(id);
+        assertThat(total(session, id)).as("快照不能被今天的配置覆盖").isEqualByComparingTo("120.00");
+        assertThat(opLogService.page(1, 10, "BOOKING_CREATE", "booking", id, null).getTotal())
+                .as("回放不该再记一条开单日志").isEqualTo(1);
+    }
+
     // ------------------------------------------------------------------ 夹具
 
     private MockHttpSession login() throws Exception {
@@ -378,6 +405,20 @@ class BillingIT extends AbstractMysqlIT {
                 LocalTime.of(14, 0), LocalTime.of(12, 0)));
         Long tid = roomTypeService.list(p.id()).get(0).id();
         return roomService.save(new RoomReq(null, p.id(), tid, "R" + tag, 1, Room.ON_SALE));
+    }
+
+    private long bookingWithRequestId(MockHttpSession session, Room room, int fromHour, int toHour,
+                                      String requestId) throws Exception {
+        String body = mockMvc.perform(post("/api/bookings")
+                        .session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roomId\":" + room.getId() + ",\"guestName\":\"计费客人\","
+                                + "\"startTime\":\"" + DAY.withHour(fromHour) + "\","
+                                + "\"endTime\":\"" + DAY.withHour(toHour) + "\","
+                                + "\"saleType\":\"HOURLY\",\"requestId\":\"" + requestId + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        return MAPPER.readTree(body).path("data").path("id").asLong();
     }
 
     private long booking(MockHttpSession session, Room room, int fromHour, int toHour) throws Exception {

@@ -16,7 +16,7 @@ import org.testcontainers.containers.MySQLContainer;
  * 已关闭连接的 URL（症状：Hikari "No operations allowed after connection closed"，全绿变全红）。
  * 所以这里用官方推荐的 singleton container 写法：静态块里 start()，进程结束由 Ryuk 回收。
  */
-@SpringBootTest
+@SpringBootTest(properties = "bnb.hold.release-enabled=false")
 abstract class AbstractMysqlIT {
 
     static final MySQLContainer<?> MYSQL;

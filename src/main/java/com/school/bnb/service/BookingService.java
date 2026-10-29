@@ -87,20 +87,27 @@ public class BookingService {
                 ? LocalDateTime.now().plusMinutes(req.holdMinutes() == null ? DEFAULT_HOLD_MINUTES : req.holdMinutes())
                 : null;
 
-        Booking b = kernel.createBooking(new CreateBookingCmd(
+        BookingKernel.CreateOutcome outcome = kernel.createOrReplay(new CreateBookingCmd(
                 ctx.room().getId(), req.guestName().trim(), req.guestPhone(),
                 req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes(),
                 status, holdExpire, req.requestId(), type.name()));
-        // 计费基准在下单时就冻结：结算时再读 room_type 的话，"下单后改房型"会改掉一张旧单的金额
-        PricingFrames.Frames frames = PricingFrames.of(type, ctx.type(), req.startTime());
-        bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(), frames.chargeUnitMinutes());
-        b.setCoveredMinutes(frames.coveredMinutes());
-        b.setChargeUnitMinutes(frames.chargeUnitMinutes());
-        opLog.record("BOOKING_CREATE", "booking", b.getId(),
-                String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
-                        b.getStartTime(), b.getEndTime(), b.getStatus()),
-                null, b);
+        Booking b = outcome.booking();
+        // 幂等回放时**不能**再做这两件事：
+        //   ① 写计费快照 —— 会用"现在的"房型配置覆盖掉下单时冻结的值，V7 白做；
+        //   ② 记开单日志 —— 同一张单会出现两条 BOOKING_CREATE，审计上看像开了两次。
+        // 典型触发：第一次提交成功但响应超时，前台重试同一个 requestId。
+        if (outcome.created()) {
+            // 计费基准在下单时就冻结：结算时再读 room_type 的话，"下单后改房型"会改掉一张旧单的金额
+            PricingFrames.Frames frames = PricingFrames.of(type, ctx.type(), req.startTime());
+            bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(), frames.chargeUnitMinutes());
+            b.setCoveredMinutes(frames.coveredMinutes());
+            b.setChargeUnitMinutes(frames.chargeUnitMinutes());
+            opLog.record("BOOKING_CREATE", "booking", b.getId(),
+                    String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
+                            b.getStartTime(), b.getEndTime(), b.getStatus()),
+                    null, b);
+        }
         return toVO(b, ctx);
     }
 

@@ -1,5 +1,7 @@
 package com.school.bnb.service;
 
+import com.school.bnb.common.BizException;
+import com.school.bnb.common.ErrorCode;
 import com.school.bnb.entity.Property;
 import com.school.bnb.mapper.StatsMapper;
 import com.school.bnb.stats.StatsAggregator;
@@ -34,6 +36,13 @@ public class StatsService {
         Property p = propertyService.require(propertyId);
         LocalDate end = to == null ? LocalDate.now() : to;
         LocalDate start = from == null ? end.minusDays(DEFAULT_DAYS - 1L) : from;
+        // 先校验再取数：区间颠倒或超长时，不该先扫一遍库再让聚合器抛异常
+        if (start.isAfter(end)) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "结束营业日不能早于开始营业日");
+        }
+        if (java.time.temporal.ChronoUnit.DAYS.between(start, end) > 366) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "报表区间最长一年");
+        }
 
         int sellable = statsMapper.countSellableRooms(propertyId);
         // 宽松超集（前一天的 00:00 ～ 后两天的 00:00），精确归属交给聚合器 ——
@@ -82,7 +91,7 @@ public class StatsService {
         StatsVO.Totals t = vo.totals();
         sb.append("合计,").append(vo.sellableRooms()).append(',')
                 .append(t.soldRoomDays()).append(',')
-                .append(String.format("%.2f", t.avgOccupancy())).append(',')
+                .append(String.format(java.util.Locale.ROOT, "%.2f", t.avgOccupancy())).append(',')
                 .append(t.revenue().toPlainString()).append(',')
                 .append(t.pendingBookings()).append(',')
                 .append(t.bookings()).append(',')

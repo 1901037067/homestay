@@ -429,8 +429,28 @@ class OccupancyTruthIT extends AbstractMysqlIT {
 
         kernel.checkOut(a.id(), TODAY.withHour(12).plusMinutes(10), 30);   // 下一单 12:00 就开始了
 
-        assertThat(rowsOfKind(r.getId(), "CLEANING")).as("挤没了就不该插行").isZero();
+        // 窗口被挤成零，但清扫这件事还在：必须留一条零长的 CLEANING 行，
+        // 否则日历没有待清扫块、前台没有"清扫完成"按钮、下一单还能直接入住
+        assertThat(rowsOfKind(r.getId(), "CLEANING")).as("清扫未完成这件事不能凭空消失").isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select block_end = block_start from occupancy where booking_id = ? and kind = 'CLEANING'",
+                Boolean.class, a.id())).as("零长区间：几何上不占时段").isTrue();
         assertThat(overlappingRows(r.getId())).isZero();
+
+        // 闸门也还在：下一单在保洁确认之前不能入住
+        LocalDateTime nextStart = TODAY.withHour(12);
+        Long nextId = jdbc.queryForObject(
+                "select id from booking where room_id = ? and start_time = ? and id <> ?",
+                Long.class, r.getId(), nextStart, a.id());
+        assertThatThrownBy(() -> kernel.checkIn(nextId, nextStart.plusMinutes(30)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("保洁没点确认，下一单就不该能入住")
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        bookingService.finishCleaning(r.getId());
+        assertThat(kernel.checkIn(nextId, nextStart.plusMinutes(30)).getStatus())
+                .as("确认清扫后即可入住").isEqualTo(Booking.IN_USE);
     }
 
     @Test
@@ -504,12 +524,17 @@ class OccupancyTruthIT extends AbstractMysqlIT {
      *
      * <p>整项目的（冲突检测、释放、报表口径）都是从这条不变量推出来的，
      * 所以每个会改写占用的动作都要顺手验它一次，而不是只验"这次操作本身对不对"。
+     *
+     * <p>两个长度守卫是必要的：零长行（比如清扫窗口被挤成零时留的那条）在半开区间里是空集，
+     * 几何上不可能与任何区间重叠。少了守卫，一条"空集"会被算成重合，测试就会假红。
      */
     private int overlappingRows(Long roomId) {
         Integer n = jdbc.queryForObject("""
                 select count(1) from occupancy a
                 join occupancy b on a.room_id = b.room_id and a.id < b.id
                 where a.room_id = ?
+                  and a.block_start < a.block_end
+                  and b.block_start < b.block_end
                   and a.block_start < b.block_end
                   and a.block_end > b.block_start
                 """, Integer.class, roomId);

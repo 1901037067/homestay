@@ -83,7 +83,7 @@ public interface BookingMapper extends BaseMapper<Booking> {
      */
     @Update("""
             update booking set covered_minutes = #{covered}, charge_unit_minutes = #{unit}
-            where id = #{id}
+            where id = #{id} and covered_minutes is null
             """)
     int snapshotPricing(@Param("id") Long id, @Param("covered") int covered, @Param("unit") int unit);
 
