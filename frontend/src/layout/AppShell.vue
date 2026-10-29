@@ -1,9 +1,9 @@
 <template>
   <div class="shell">
-    <aside class="side">
+    <aside class="side" :class="{ 'side--icon': !navLabels }">
       <div class="brand">
         <span class="brand__mark"><el-icon :size="17"><House /></el-icon></span>
-        <span class="brand__text">
+        <span v-if="navLabels" class="brand__text">
           <strong>云栖民宿</strong>
           <small>分时预订系统</small>
         </span>
@@ -17,91 +17,93 @@
           class="nav__item"
           :class="{ 'is-active': route.path === item.path }"
           :aria-label="item.label"
+          :title="item.label"
         >
           <el-icon :size="16"><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
+          <span v-if="navLabels">{{ item.label }}</span>
         </router-link>
       </nav>
 
       <div class="side__foot">
-        <span class="bnb-muted">W2 · 房源域</span>
+        <el-dropdown trigger="click" placement="top-start" @command="onCommand">
+          <button class="user" aria-label="账号菜单">
+            <span class="user__avatar">{{ initial }}</span>
+            <span v-if="navLabels" class="user__name">{{ user?.displayName }}</span>
+            <el-icon v-if="navLabels" :size="12"><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="settings">
+                <el-icon><Setting /></el-icon>设置
+              </el-dropdown-item>
+              <el-dropdown-item command="logout" divided>
+                <el-icon><SwitchButton /></el-icon>退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <div class="tools">
+          <button class="tool" :aria-label="themeHint" :title="themeHint" @click="toggleTheme">
+            <el-icon :size="16"><component :is="isDark ? Sunny : Moon" /></el-icon>
+          </button>
+          <button class="tool" aria-label="设置" title="设置" @click="settings = true">
+            <el-icon :size="16"><Setting /></el-icon>
+          </button>
+        </div>
       </div>
     </aside>
 
-    <div class="main">
-      <header class="top">
-        <div class="top__title">
-          <h1>{{ current?.label }}</h1>
-          <p class="bnb-muted">{{ current?.desc }}</p>
-        </div>
+    <main class="body">
+      <router-view />
+    </main>
 
-        <div class="top__actions">
-          <div class="bnb-segmented" role="group" aria-label="配色模式">
-            <button
-              v-for="m in THEME_MODES"
-              :key="m.value"
-              class="bnb-segmented__item"
-              :class="{ 'is-active': mode === m.value }"
-              :aria-pressed="mode === m.value"
-              @click="setMode(m.value)"
-            >
-              {{ m.label }}
-            </button>
-          </div>
-
-          <el-dropdown trigger="click" @command="onCommand">
-            <button class="user" aria-label="账号菜单">
-              <span class="user__avatar">{{ initial }}</span>
-              <span class="user__name">{{ user?.displayName }}</span>
-              <el-icon :size="12"><ArrowDown /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="logout">
-                  <el-icon><SwitchButton /></el-icon>退出登录
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </header>
-
-      <main class="body">
-        <router-view />
-      </main>
-    </div>
+    <SettingsDialog v-model="settings" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document,
-  PriceTag, TrendCharts
+  PriceTag, TrendCharts, Sunny, Moon, Setting
 } from '@element-plus/icons-vue'
 import { THEME_MODES, useTheme } from '../composables/useTheme'
+import SettingsDialog from '../components/SettingsDialog.vue'
 import http from '../api'
 
 const route = useRoute()
 const router = useRouter()
-const { mode, setMode } = useTheme()
+const { mode, setMode, isDark, navLabels } = useTheme()
+
+const settings = ref(false)
 
 const nav = [
-  { path: '/', label: '概览', icon: Grid, desc: '今日房态与经营概况' },
-  { path: '/calendar', label: '房态日历', icon: Calendar, desc: '点空白格开单，块上画的是含清扫缓冲的占用' },
-  { path: '/orders', label: '订单', icon: Tickets, desc: '全部订单与账单，退房后待结算在这里收' },
-  { path: '/rooms', label: '房间', icon: OfficeBuilding, desc: '具体房间的增删改与上下架' },
-  { path: '/room-types', label: '房型', icon: Ticket, desc: '定价、起步时长与清扫缓冲' },
-  { path: '/properties', label: '民宿', icon: House, desc: '门店与营业日切割点' },
-  { path: '/rate-rules', label: '价格规则', icon: PriceTag, desc: '按日期、星期、时段覆盖平时价' },
-  { path: '/stats', label: '报表', icon: TrendCharts, desc: '出租率、营收与分时段热度，全部按营业日切割' },
-  { path: '/logs', label: '操作日志', icon: Document, desc: '谁在什么时候改了什么' }
+  { path: '/', label: '概览', icon: Grid },
+  { path: '/calendar', label: '房态日历', icon: Calendar },
+  { path: '/orders', label: '订单', icon: Tickets },
+  { path: '/rooms', label: '房间', icon: OfficeBuilding },
+  { path: '/room-types', label: '房型', icon: Ticket },
+  { path: '/properties', label: '民宿', icon: House },
+  { path: '/rate-rules', label: '价格规则', icon: PriceTag },
+  { path: '/stats', label: '报表', icon: TrendCharts },
+  { path: '/logs', label: '操作日志', icon: Document }
 ]
 
-const current = computed(() => nav.find((n) => n.path === route.path))
 const user = computed(() => JSON.parse(localStorage.getItem('bnb_user') || 'null'))
 const initial = computed(() => (user.value?.displayName || '?').slice(0, 1))
+
+// 三档配色收进设置里，侧栏这一枚只管"把当前看到的翻过来"。
+// auto 档下按钮显示的是系统此刻解析出来的那一档，点一下就把模式钉死成相反档
+const themeHint = computed(() => {
+  const label = THEME_MODES.find((m) => m.value === mode.value)?.label
+  return `配色：${label}（当前${isDark.value ? '深色' : '浅色'}）· 点按切到${isDark.value ? '浅色' : '深色'}，三档在设置里`
+})
+
+function toggleTheme() {
+  setMode(isDark.value ? 'light' : 'dark')
+}
 
 onMounted(async () => {
   const res = await http.get('/me')
@@ -109,7 +111,9 @@ onMounted(async () => {
 })
 
 async function onCommand(cmd) {
-  if (cmd === 'logout') {
+  if (cmd === 'settings') {
+    settings.value = true
+  } else if (cmd === 'logout') {
     await http.get('/logout')
     localStorage.removeItem('bnb_user')
     router.push('/login')
@@ -137,6 +141,24 @@ async function onCommand(cmd) {
   position: sticky;
   top: 0;
   height: 100vh;
+}
+
+/* 设置里关掉"显示导航文字"就收成图标栏 */
+.side--icon {
+  width: var(--bnb-nav-w-compact);
+  padding: var(--bnb-space-5) var(--bnb-space-2);
+}
+.side--icon .brand {
+  justify-content: center;
+  padding: 0;
+}
+.side--icon .nav__item {
+  justify-content: center;
+  padding: 8px 0;
+}
+.side--icon .user,
+.side--icon .tools {
+  justify-content: center;
 }
 
 .brand {
@@ -203,58 +225,26 @@ async function onCommand(cmd) {
   color: var(--bnb-accent);
 }
 
+/* ---------- 侧栏底部：账号 + 配色 + 设置（原来在右侧顶栏上） ---------- */
 .side__foot {
   margin-top: auto;
-  padding: 0 var(--bnb-space-2);
-  font-size: var(--bnb-fs-caption);
-}
-
-/* ---------- 主区 ---------- */
-.main {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-}
-
-.top {
-  position: sticky;
-  top: 0;
-  z-index: var(--bnb-z-sticky);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--bnb-space-4);
-  min-height: var(--bnb-header-h);
-  padding: var(--bnb-space-3) var(--bnb-space-8);
-  background: var(--bnb-material);
-  backdrop-filter: var(--bnb-material-blur);
-  border-bottom: 1px solid var(--bnb-separator);
-}
-
-.top__title h1 {
-  font-size: var(--bnb-fs-title3);
-}
-.top__title p {
-  font-size: var(--bnb-fs-footnote);
-}
-
-.top__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--bnb-space-4);
+  gap: var(--bnb-space-2);
 }
 
 .user {
   display: flex;
   align-items: center;
   gap: var(--bnb-space-2);
+  width: 100%;
   padding: 4px 10px 4px 4px;
   border: 1px solid var(--bnb-separator);
   border-radius: var(--bnb-radius-pill);
   background: var(--bnb-bg-card);
   color: var(--bnb-text-primary);
   font-size: var(--bnb-fs-callout);
+  cursor: pointer;
   transition: border-color var(--bnb-duration-fast) var(--bnb-ease);
 }
 .user:hover {
@@ -268,16 +258,44 @@ async function onCommand(cmd) {
   border-radius: 50%;
   background: var(--bnb-fill-secondary);
   font-weight: 600;
+  flex-shrink: 0;
 }
 .user__name {
-  max-width: 90px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
+.tools {
+  display: flex;
+  gap: var(--bnb-space-2);
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--bnb-separator);
+  border-radius: var(--bnb-radius-sm);
+  background: var(--bnb-bg-card);
+  color: var(--bnb-text-secondary);
+  cursor: pointer;
+  transition: color var(--bnb-duration-fast) var(--bnb-ease),
+    border-color var(--bnb-duration-fast) var(--bnb-ease);
+}
+.tool:hover {
+  color: var(--bnb-accent);
+  border-color: var(--bnb-accent);
+}
+
+/* ---------- 主区 ---------- */
 .body {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---------- 窄屏：侧栏收成顶部横向导航 ---------- */
@@ -285,7 +303,8 @@ async function onCommand(cmd) {
   .shell {
     flex-direction: column;
   }
-  .side {
+  .side,
+  .side--icon {
     width: auto;
     height: auto;
     position: static;
@@ -300,16 +319,18 @@ async function onCommand(cmd) {
     flex-direction: row;
     overflow-x: auto;
   }
-  .nav__item span {
-    display: none;
-  }
-  .side__foot,
+  .nav__item span,
   .brand__text {
     display: none;
   }
-  .top {
-    padding: var(--bnb-space-3) var(--bnb-space-4);
-    flex-wrap: wrap;
+  .side__foot {
+    margin-top: 0;
+    margin-left: auto;
+    flex-direction: row;
+    align-items: center;
+  }
+  .user {
+    width: auto;
   }
 }
 </style>

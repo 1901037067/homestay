@@ -108,8 +108,23 @@
 
   /* --- 布局 --- */
   --bnb-nav-w: 224px;
-  --bnb-header-h: 52px;
+  --bnb-nav-w-compact: 64px;
   --bnb-content-max: 1200px;
+}
+
+/* ---------- 界面密度（设置里的"紧凑"档）----------
+   只收间距与控件高度，不动字号：字号一变小，表格里的民宿名/房号就会和数字对不齐，
+   那种回归比"看着松"更难查 */
+html.bnb-dense {
+  --bnb-space-3: 10px;
+  --bnb-space-4: 12px;
+  --bnb-space-5: 16px;
+  --bnb-space-6: 20px;
+  --bnb-space-8: 24px;
+  --bnb-space-10: 30px;
+  --bnb-space-12: 36px;
+  --el-component-size: 34px;
+  --el-component-size-large: 42px;
 }
 
 /* ---------- 深色模式 ---------- */
