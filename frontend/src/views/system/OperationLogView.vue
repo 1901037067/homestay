@@ -1,10 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">操作日志</div>
-        <div class="bnb-page__sub">谁在什么时候改了什么 —— 审计口径，按时间倒序</div>
-      </div>
+      <div class="bnb-page__title">操作日志</div>
       <el-button :loading="loading" @click="load">
         <el-icon><Refresh /></el-icon>刷新
       </el-button>

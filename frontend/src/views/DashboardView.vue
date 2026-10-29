@@ -1,10 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">概览</div>
-        <div class="bnb-page__sub">房源目录视角。经营数据（出租率/营收/热度）在「报表」页，按营业日切割统计</div>
-      </div>
+      <div class="bnb-page__title">概览</div>
       <el-button :loading="loading" @click="load">
         <el-icon><Refresh /></el-icon>刷新
       </el-button>

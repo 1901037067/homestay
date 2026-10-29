@@ -1,13 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">经营报表</div>
-        <div class="bnb-page__sub">
-          全部按营业日切割（{{ report?.dayCutTime?.slice(0, 5) || '06:00' }} 前的单算前一天）；
-          营收只计已结算，退了房没结账的单列「待结算」
-        </div>
-      </div>
+      <div class="bnb-page__title">经营报表</div>
       <div class="head-actions">
         <el-button :loading="loading" @click="load">
           <el-icon><Refresh /></el-icon>刷新

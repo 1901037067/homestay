@@ -121,12 +121,6 @@ button,
   line-height: var(--bnb-lh-tight);
 }
 
-.bnb-page__sub {
-  margin-top: var(--bnb-space-1);
-  font-size: var(--bnb-fs-subheadline);
-  color: var(--bnb-text-secondary);
-}
-
 /* 卡片：Apple 的分组列表卡 —— 靠底色差分层，阴影极轻 */
 .bnb-card {
   background: var(--bnb-bg-card);

@@ -1,12 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">房态日历</div>
-        <div class="bnb-page__sub">
-          纵轴房间 × 横轴 24 小时，横轴从营业日切割点起转；点空白格直接开单
-        </div>
-      </div>
+      <div class="bnb-page__title">房态日历</div>
       <el-button :loading="loading" @click="load">
         <el-icon><Refresh /></el-icon>刷新
       </el-button>

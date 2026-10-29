@@ -29,6 +29,8 @@
   --bnb-fs-title2: 24px;
   --bnb-fs-title1: 28px;
   --bnb-fs-large: 34px;
+  /* 侧栏导航字号：设置里可以单独调，默认跟着 callout 走 */
+  --bnb-nav-fs: var(--bnb-fs-callout);
   /* 大字号收紧字距，小字号放开 —— Apple 的 tracking 方向是随字号变号的 */
   --bnb-ls-display: -0.021em;
   --bnb-ls-title: -0.016em;

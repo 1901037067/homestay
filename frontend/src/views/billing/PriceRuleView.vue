@@ -1,12 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">价格规则</div>
-        <div class="bnb-page__sub">
-          按日期、星期、时段覆盖房型的平时价；一个时刻只取一条，不叠加
-        </div>
-      </div>
+      <div class="bnb-page__title">价格规则</div>
       <el-button type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新建规则
       </el-button>

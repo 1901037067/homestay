@@ -1,10 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">民宿</div>
-        <div class="bnb-page__sub">营业日切割点决定报表把凌晨算到哪一天，可售窗口只约束钟点房</div>
-      </div>
+      <div class="bnb-page__title">民宿</div>
       <el-button type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新建民宿
       </el-button>

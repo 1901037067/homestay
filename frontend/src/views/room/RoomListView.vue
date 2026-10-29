@@ -1,10 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">房间</div>
-        <div class="bnb-page__sub">下架（OFFLINE）是删除的替代动作 —— 有历史订单的房间不允许物理删除</div>
-      </div>
+      <div class="bnb-page__title">房间</div>
       <el-button type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新建房间
       </el-button>

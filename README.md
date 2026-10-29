@@ -35,9 +35,9 @@ db/demo/seed_demo.sql      演示流水（手动灌，不进 Flyway）
 frontend/src
 ├── styles/tokens.css      Apple 设计令牌 + Element Plus 变量覆盖（明暗双模）
 ├── styles/base.css        排版、卡片、分段控件、状态胶囊
-├── composables/useTheme.js浅色 / 深色 / 跟随系统 + 界面密度 + 侧栏是否显示文字，持久化在 localStorage
+├── composables/useTheme.js浅色 / 深色 / 跟随系统 + 密度 + 侧栏与正文字号 + 是否显示导航文字，存 localStorage
 ├── layout/AppShell.vue    毛玻璃侧栏（底部收账号、配色开关、设置）
-├── components/SettingsDialog.vue  设置面板（三档配色、密度、侧栏标签、关于与恢复默认）
+├── components/SettingsDialog.vue  设置面板（配色、密度、侧栏/正文两级字号、侧栏标签、关于与恢复默认）
 ├── components/BillDialog.vue  账单弹窗（日历与订单列表共用，试算/快照同一套渲染）
 ├── utils/dtime.js         naive 本地时间的解析与格式化（不引 dayjs，避免偏移被算错）
 └── views                  登录 / 概览 / calendar 房态 / booking 订单 / room 三个管理页 /
@@ -149,6 +149,12 @@ CSS 变量生效，没有覆盖 `.el-*` 类名，组件库升级不会崩。三�
 浅色 / 深色 / 跟随系统三档在侧栏底部的「设置」里；那一枚太阳/月亮按钮只做一件事——
 把当前看到的配色翻过来（`auto` 档下显示系统解析出的那一档，点一下就把模式钉死成相反档）。
 选择都存 `localStorage`，`auto` 档跟随系统实时切换。
+
+字号分「侧栏导航」和「正文」两档，都靠改 `<html>` 上的自定义属性实现：正文档写
+`--bnb-fs-body` / `--bnb-fs-subheadline` / `--bnb-fs-callout`，而 Element 的
+`--el-font-size-base` 本来就是 `var(--bnb-fs-subheadline)` —— 自定义属性在使用点才解析，
+所以表格、表单、按钮的字会跟着一起变，不需要逐个组件覆盖。「标准」档什么都不写，
+默认值仍然只有 `tokens.css` 一处来源。
 
 九个页面：概览 / 房态日历 / 订单 / 房间 / 房型 / 民宿 / 价格规则 / 报表 / 操作日志。
 两条刻意的设计：

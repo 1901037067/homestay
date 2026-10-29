@@ -26,6 +26,28 @@
       </div>
       <div class="row">
         <div class="row__text">
+          <span>侧栏导航字号</span>
+          <small class="bnb-muted">只影响左侧这一列菜单，不动正文</small>
+        </div>
+        <el-radio-group v-model="navFontPick" size="small">
+          <el-radio-button v-for="s in FONT_SIZES" :key="s.value" :value="s.value">
+            {{ s.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+      <div class="row">
+        <div class="row__text">
+          <span>正文字号</span>
+          <small class="bnb-muted">表格、表单与卡片里的主要文字一起变</small>
+        </div>
+        <el-radio-group v-model="bodyFontPick" size="small">
+          <el-radio-button v-for="s in FONT_SIZES" :key="s.value" :value="s.value">
+            {{ s.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </div>
+      <div class="row">
+        <div class="row__text">
           <span>侧栏显示导航文字</span>
           <small class="bnb-muted">关掉后侧栏收成一条图标栏，给表格多留宽度</small>
         </div>
@@ -59,22 +81,29 @@
 
 <script setup>
 import { computed } from 'vue'
-import { DENSITIES, PREF_KEYS, THEME_MODES, useTheme } from '../composables/useTheme'
+import { DENSITIES, FONT_SIZES, PREF_KEYS, THEME_MODES, useTheme } from '../composables/useTheme'
 
 const visible = defineModel({ type: Boolean })
-const { mode, setMode, density, setDensity, navLabels, setNavLabels } = useTheme()
+const {
+  mode, setMode, density, setDensity, navLabels, setNavLabels,
+  navFont, setNavFont, bodyFont, setBodyFont
+} = useTheme()
 
 // 界面上直接改这几个 ref 也能生效，但那样 localStorage 就不写了 ——
-// 刷新一下"设置就没了"。所以三档都走 setXxx，把持久化当成唯一的写入口
+// 刷新一下"设置就没了"。所以每档都走 setXxx，把持久化当成唯一的写入口
 const modePick = computed({ get: () => mode.value, set: (v) => setMode(v) })
 const densityPick = computed({ get: () => density.value, set: (v) => setDensity(v) })
 const labelsPick = computed({ get: () => navLabels.value, set: (v) => setNavLabels(v) })
+const navFontPick = computed({ get: () => navFont.value, set: (v) => setNavFont(v) })
+const bodyFontPick = computed({ get: () => bodyFont.value, set: (v) => setBodyFont(v) })
 
 function reset() {
   PREF_KEYS.forEach((k) => localStorage.removeItem(k))
   setMode('auto')
   setDensity('comfortable')
   setNavLabels(true)
+  setNavFont('standard')
+  setBodyFont('standard')
 }
 </script>
 

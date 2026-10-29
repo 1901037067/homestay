@@ -2,7 +2,8 @@
   <div class="shell">
     <aside class="side" :class="{ 'side--icon': !navLabels }">
       <div class="brand">
-        <span class="brand__mark"><el-icon :size="17"><House /></el-icon></span>
+        <!-- 品牌位直接用标签页那枚 favicon.svg：同一张图，页面与标签头不会长两个样 -->
+        <img class="brand__mark" src="/favicon.svg" alt="" width="34" height="34" />
         <span v-if="navLabels" class="brand__text">
           <strong>云栖民宿</strong>
           <small>分时预订系统</small>
@@ -169,13 +170,10 @@ async function onCommand(cmd) {
 }
 
 .brand__mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: var(--bnb-accent);
-  color: var(--bnb-accent-on);
   flex-shrink: 0;
 }
 
@@ -207,7 +205,7 @@ async function onCommand(cmd) {
   gap: var(--bnb-space-3);
   padding: 8px var(--bnb-space-3);
   border-radius: var(--bnb-radius-sm);
-  font-size: var(--bnb-fs-callout);
+  font-size: var(--bnb-nav-fs);
   font-weight: 500;
   color: var(--bnb-text-secondary);
   text-decoration: none;
@@ -225,12 +223,26 @@ async function onCommand(cmd) {
   color: var(--bnb-accent);
 }
 
-/* ---------- 侧栏底部：账号 + 配色 + 设置（原来在右侧顶栏上） ---------- */
+/* ---------- 侧栏底部：账号 + 配色 + 设置 同一行（原来在右侧顶栏上） ---------- */
 .side__foot {
   margin-top: auto;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: var(--bnb-space-2);
+}
+/* el-dropdown 自己包了一层 span，账号要撑满剩余宽度就得指挥它 */
+.side__foot :deep(.el-dropdown) {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 收成图标栏时这一行放不下，改为竖排 */
+.side--icon .side__foot {
+  flex-direction: column;
+}
+.side--icon .side__foot :deep(.el-dropdown) {
+  flex: none;
 }
 
 .user {

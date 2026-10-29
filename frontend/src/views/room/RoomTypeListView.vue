@@ -1,10 +1,7 @@
 <template>
   <div class="bnb-page">
     <div class="bnb-page__head">
-      <div>
-        <div class="bnb-page__title">房型</div>
-        <div class="bnb-page__sub">起步时长与超时单价决定计费；清扫缓冲直接参与冲突检测</div>
-      </div>
+      <div class="bnb-page__title">房型</div>
       <el-button type="primary" @click="openCreate">
         <el-icon><Plus /></el-icon>新建房型
       </el-button>
