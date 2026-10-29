@@ -46,7 +46,8 @@
 
         <div class="tools">
           <button class="tool" :aria-label="themeHint" :title="themeHint" @click="toggleTheme">
-            <el-icon :size="16"><component :is="isDark ? Sunny : Moon" /></el-icon>
+            <!-- 图标表示"现在是哪一档"，不是"点下去会变成哪一档"：浅色显示太阳、深色显示月亮 -->
+            <el-icon :size="16"><component :is="isDark ? Moon : Sunny" /></el-icon>
           </button>
           <button class="tool" aria-label="设置" title="设置" @click="settings = true">
             <el-icon :size="16"><Setting /></el-icon>
