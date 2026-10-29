@@ -160,7 +160,7 @@ async function load() {
     const res = await http.get(`/bookings?${params.toString()}`)
     rows.value = res.data.records
     total.value = res.data.total
-    if (query.status) pendingOnly.value = query.status === 'CHECKED_OUT'
+    pendingOnly.value = query.status === 'CHECKED_OUT'
   } finally {
     loading.value = false
   }

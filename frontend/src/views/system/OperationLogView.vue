@@ -94,6 +94,13 @@ const ACTIONS = [
   { value: 'BOOKING_RESCHEDULE', label: '改期' },
   { value: 'BOOKING_CANCEL', label: '取消' },
   { value: 'CLEANING_DONE', label: '清扫完成' },
+  { value: 'BOOKING_SETTLE', label: '结算' },
+  // 改价会直接改变账单金额，是最该被审计的动作之一
+  { value: 'ROOM_TYPE_CREATE', label: '新建房型' },
+  { value: 'ROOM_TYPE_UPDATE', label: '房型改价' },
+  { value: 'RATE_RULE_CREATE', label: '新建价格规则' },
+  { value: 'RATE_RULE_UPDATE', label: '修改价格规则' },
+  { value: 'RATE_RULE_DELETE', label: '删除价格规则' },
   { value: 'ROOM_STATUS', label: '房间状态变更' }
 ]
 

@@ -56,6 +56,10 @@
   --bnb-hairline: rgba(0, 0, 0, 0.045);
 
   /* --- 强调色与语义色（文字用可达标变体） --- */
+  /* 亮底色块（日历上的订单块）里的文字：浅色主题下是白字，
+     深色主题下底色换成更亮的语义色（#30d158 / #ff9f0a），白字对比度只剩约 2:1，必须改用深色字 */
+  --bnb-on-bright: #ffffff;
+
   --bnb-accent: #0071e3;
   --bnb-accent-hover: #0077ed;
   --bnb-accent-active: #0062c4;
@@ -127,6 +131,8 @@ html.dark {
   --bnb-separator: rgba(84, 84, 88, 0.65);
   --bnb-separator-opaque: #38383a;
   --bnb-hairline: rgba(255, 255, 255, 0.08);
+
+  --bnb-on-bright: #0b0b0c;
 
   --bnb-accent: #0a84ff;
   --bnb-accent-hover: #339cff;

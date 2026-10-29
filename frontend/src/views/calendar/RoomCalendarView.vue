@@ -613,13 +613,20 @@ function goToday() {
   load()
 }
 
+// 请求序号：切民宿/切日期时可能两个请求在飞，晚到的旧响应会把新数据盖掉
+// （日历显示 A 店、格子却按 B 店的 id 开单）。只认最后一次发出的请求
+let loadSeq = 0
+
 async function load() {
   if (!propertyId.value || !date.value) return
+  const seq = ++loadSeq
   loading.value = true
   try {
-    cal.value = (await http.get(`/calendar?propertyId=${propertyId.value}&date=${date.value}`)).data
+    const res = (await http.get(`/calendar?propertyId=${propertyId.value}&date=${date.value}`)).data
+    if (seq !== loadSeq) return
+    cal.value = res
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -770,7 +777,8 @@ onMounted(async () => {
   padding: 0 8px;
   font-size: var(--bnb-fs-caption);
   line-height: 1.35;
-  color: #fff;
+  /* 不用写死 #fff：深色主题下块底色是亮绿/亮橙，白字对比度只有约 2:1 */
+  color: var(--bnb-on-bright);
   white-space: nowrap;
   overflow: hidden;
 }

@@ -92,15 +92,23 @@ const bookingId = ref(null)
 const money = (v) => (v === null || typeof v === 'undefined' ? '—' : Number(v).toFixed(2))
 const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
 
+// 连着点两张单时，前一张的响应可能后到：用序号把它丢掉，
+// 否则界面上会出现"A 的金额、B 的单号"，点结算就成了给 B 收 A 的钱
+let loadSeq = 0
+let settledSeq = 0
+
 async function load() {
   if (!bookingId.value) return
+  const seq = ++loadSeq
   loading.value = true
   try {
-    bill.value = (await http.get(`/bookings/${bookingId.value}/bill`)).data
+    const res = (await http.get(`/bookings/${bookingId.value}/bill`)).data
+    if (seq !== loadSeq) return
+    bill.value = res
   } catch {
-    bill.value = null
+    if (seq === loadSeq) bill.value = null
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -112,9 +120,11 @@ async function open(id) {
 }
 
 async function settle() {
+  const seq = ++settledSeq
   settling.value = true
   try {
     await http.post(`/bookings/${bookingId.value}/settle`)
+    if (seq !== settledSeq) return
     ElMessage.success('已结算')
     await load()          // 读回来的一定是快照，而不是刚才那份试算
     emit('settled')

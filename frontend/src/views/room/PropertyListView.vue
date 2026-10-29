@@ -129,7 +129,9 @@ function openCreate() {
 }
 
 function openEdit(row) {
-  Object.assign(form, { ...row })
+  // 先回到空表单再合并：后端配了 non_null，值为 null 的字段会整个消失，
+  // 不先清空的话"编辑一个没填楼层的房间"会沿用上一次编辑的那层楼
+  Object.assign(form, empty(), { ...row })
   dialog.value = true
 }
 

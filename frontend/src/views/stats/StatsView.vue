@@ -102,7 +102,7 @@ import { useTheme } from '../../composables/useTheme'
 echarts.use([BarChart, LineChart, HeatmapChart,
   GridComponent, TooltipComponent, LegendComponent, VisualMapComponent, CanvasRenderer])
 
-const { mode } = useTheme()
+const { isDark } = useTheme()
 
 const properties = ref([])
 const propertyId = ref(null)
@@ -302,8 +302,10 @@ onBeforeUnmount(() => {
   rankChart?.dispose()
 })
 
-// 换主题要重画：图里的颜色是初始化时从 CSS 变量读的，不重画就会留在旧主题
-watch(mode, () => nextTick(render))
+// 换主题要重画：图里的颜色是初始化时从 CSS 变量读的，不重画就会留在旧主题。
+// 这里看的是"实际是不是深色"而不是"用户选了哪一档"——选"跟随系统"时 mode 一直是 auto，
+// 系统换主题不会改变 mode，图表就不会重绘
+watch(isDark, () => nextTick(render))
 watch(rotate, () => nextTick(render))
 </script>
 
