@@ -101,9 +101,15 @@ public class BookingService {
         // 而"第一次成功、响应超时、前台重试"这几分钟里房间很可能被改成维修、
         // 房型可能调过最短时长。先跑预判，重试就会收到 2003/3004 —— 前台以为没开出去，
         // 于是再开一张，同一间房被重复占用。已经在库里成功过的请求，答案只能是那张原单
-        Booking replay = kernel.replayOf(cmd);
-        if (replay != null) {
-            return toVO(replay, ctx);
+        BookingKernel.ReplayProbe probe = kernel.replayOf(cmd);
+        if (probe.state() == BookingKernel.ReplayState.REPLAY) {
+            return toVO(probe.booking(), ctx);
+        }
+        // 同标识不同内容也在这里就拒。它是"上一次已经写进库了"的另一种答案，
+        // 若当成没命中继续往下走，前台改了时段又赶上此刻不可售时，3005 会被 2003/3004 抢掉，
+        // 而"这张请求已经开出去过一张单"恰恰是前台最需要知道的那件事
+        if (probe.state() == BookingKernel.ReplayState.CONFLICT) {
+            throw BookingKernel.idempotencyConflict(probe.booking());
         }
 
         assertSellable(ctx, req.startTime(), req.endTime(), type);
@@ -175,7 +181,10 @@ public class BookingService {
     public BookingVO checkIn(Long bookingId) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        Booking after = kernel.checkIn(bookingId, LocalDateTime.now());
+        // 与退房同一口径对齐到秒：datetime 列只存到秒，带纳秒进去会被四舍五入，
+        // 于是"内存里那个入住时刻"和"库里存回来的"不是同一个值。checkOut 已经这么处理了，
+        // 两个入口保持一致，别留一个"看起来不一样所以肯定有讲究"的不对称给后来人
+        Booking after = kernel.checkIn(bookingId, LocalDateTime.now().withNano(0));
         opLog.record("BOOKING_CHECK_IN", "booking", bookingId, ctx.property().getId(),
                 String.format("%s %s｜%s 入住（计划 %s）", ctx.room().getRoomNo(), after.getBookingNo(),
                         after.getGuestName(), after.getStartTime()),

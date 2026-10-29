@@ -82,16 +82,43 @@ public class BookingKernel {
      * 可库里明明有一张，于是再开一张新的，房间被重复占用（审阅抓出）。
      * <b>已经在库里成功过的请求，答案只能是那张原单，不能是"现在卖不了"。</b>
      *
+     * <p>三态而不是"命中/没命中"两态：同标识<b>不同</b>内容也是一次命中，只是答案不是原单而是
+     * 拒绝。把它并进 MISS 让流程继续往下走，报错码就会被可售性判断抢掉 —— 前台改完时段重试时
+     * 若新时段恰好不可售，收到的是 2003/3004 而不是 3005，于是看不出"上一次其实已经开出去了"。
+     *
      * <p>用不加锁的读：这里发生在锁房间行之前，加锁会反掉"房间行 → 订单行"的统一顺序。
      * 探测漏了不影响正确性 —— {@link #createOrReplay} 锁后还会用当前读做权威判定。
      */
-    public Booking replayOf(CreateBookingCmd cmd) {
+    public ReplayProbe replayOf(CreateBookingCmd cmd) {
         String requestId = blankToNull(cmd.requestId());
         if (requestId == null) {
-            return null;
+            return new ReplayProbe(ReplayState.MISS, null);
         }
         Booking existing = bookingMapper.findByRequestId(requestId);
-        return existing != null && sameAsRequest(existing, cmd) ? existing : null;
+        if (existing == null) {
+            return new ReplayProbe(ReplayState.MISS, null);
+        }
+        return new ReplayProbe(sameAsRequest(existing, cmd) ? ReplayState.REPLAY : ReplayState.CONFLICT,
+                existing);
+    }
+
+    /** 幂等探测的三态。见 {@link #replayOf}。 */
+    public enum ReplayState {
+        /** 库里没有这个标识 —— 正常走下单。 */
+        MISS,
+        /** 同标识同内容 —— 答案就是那张原单。 */
+        REPLAY,
+        /** 同标识不同内容 —— 必须拒，且不能被后面的可售性判断抢掉错误码。 */
+        CONFLICT
+    }
+
+    public record ReplayProbe(ReplayState state, Booking booking) {
+    }
+
+    /** 同标识不同内容的统一措辞：探测与服务层都用它，避免两处话术漂移。 */
+    public static BizException idempotencyConflict(Booking existing) {
+        return new BizException(ErrorCode.IDEMPOTENCY_CONFLICT,
+                "该请求已开出一张不同内容的订单（" + existing.getBookingNo() + "），请重新发起");
     }
 
     @Transactional
@@ -121,8 +148,7 @@ public class BookingKernel {
                     log.info("幂等回放 requestId={} → booking {}", requestId, existing.getBookingNo());
                     return new CreateOutcome(existing, false);
                 }
-                throw new BizException(ErrorCode.IDEMPOTENCY_CONFLICT,
-                        "该请求已开出一张不同内容的订单（" + existing.getBookingNo() + "），请重新发起");
+                throw idempotencyConflict(existing);
             }
         }
 

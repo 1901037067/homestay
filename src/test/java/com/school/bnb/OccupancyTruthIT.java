@@ -214,6 +214,33 @@ class OccupancyTruthIT extends AbstractMysqlIT {
         assertThat(occupancyRows(r.getId())).isEqualTo(1);
     }
 
+    // --------- ⑤ 续：冲突也一样不能被"现在还能不能卖"顶掉（第十一轮审阅第 3 条）
+
+    @Test
+    @DisplayName("⑤ 同 requestId 改内容重试、且新内容此刻不可售：仍必须是 3005，不能被 2003 抢掉")
+    void idempotencyConflictBeatsSellabilityRejection() {
+        Room r = room(2, 0, 0);
+        String rid = "REQ-CONFLICT-" + System.nanoTime();
+
+        bookingService.create(new CreateBookingReq(r.getId(), "改过时段", null,
+                TODAY.withHour(9), TODAY.withHour(12), Booking.CONFIRMED, null, "HOURLY", rid));
+
+        // 前台改完时段还没点重试的这几分钟里，房间被改成了维修
+        jdbc.update("update room set status = 'MAINTENANCE' where id = ?", r.getId());
+
+        // 上一轮把"回放要排在可售性判断之前"修对了，但只覆盖了同内容的分支：
+        // 同标识不同内容当时仍算没命中，流程继续往下走，于是新内容不可售时先撞上 2003。
+        // 而 3005 才是前台需要的那句话 —— "这个请求已经开出去过一张单了"，
+        // 收到"房间维修"他就会再开一张，同一时段被占两次
+        assertThatThrownBy(() -> bookingService.create(new CreateBookingReq(r.getId(), "改过时段", null,
+                TODAY.withHour(13), TODAY.withHour(16), Booking.CONFIRMED, null, "HOURLY", rid)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.IDEMPOTENCY_CONFLICT);
+
+        assertThat(occupancyRows(r.getId())).as("既没开出新单，也没把旧单改掉").isEqualTo(1);
+    }
+
     // ------------------------- ⑤ 同标识不同内容要拒（续：售卖方式也算内容）
 
     @Test
@@ -293,7 +320,8 @@ class OccupancyTruthIT extends AbstractMysqlIT {
                 .isEqualTo(ErrorCode.ROOM_NOT_ON_SALE);
     }
 
-    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）    @Test
+    // ------------------------- ⑥⑦ 改变实际占用范围的动作也要跑冲突检测（第三轮审阅第 1 条）
+    @Test
     @DisplayName("⑥ 提前入住也要跑冲突检测：不能把占用前扩进别人已订的时段")
     void earlyCheckInCannotOverlapExistingGuest() {
         Room r = room(2, 0, 0);

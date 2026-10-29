@@ -115,7 +115,10 @@ public class BookingController {
         return R.ok(service.availableRooms(propertyId, start, end, minHours, saleType));
     }
 
-    @Operation(summary = "某房的空闲区间列表")
+    @Operation(summary = "某房的空闲区间列表", description = """
+            只做区间相减（窗口减去占用块，缓冲已含在 block 里），不套可售策略。
+            可售性由 SellPolicy 在下单与 /rooms/availability 里判；这里给房态日历画"这段时间是不是空的"，
+            两者混在一个接口里日历会出现说不清楚的洞。""")
     @GetMapping("/rooms/{id}/availability")
     public R<List<FreeSlotVO>> freeSlots(
             @PathVariable("id") Long roomId,
