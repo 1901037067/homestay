@@ -14,6 +14,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 API="${API:-http://127.0.0.1:8080}"
+# 演练时把 compose 指到隔离栈（-p bnb-drill -f ...）：否则这里查到的是真栈的订单 id，
+# 却被发到演练 API 上结算 —— 两套数据对不上，还会把真栈的单结算掉
+COMPOSE="${COMPOSE:-docker compose}"
 USER_NAME="${DEMO_USER:-admin}"
 PASSWORD="${DEMO_PASSWORD:-Admin@123}"
 MYSQL_PWD="${MYSQL_PWD:-bnb_dev_123}"
@@ -30,7 +33,7 @@ curl -fsS -c "$JAR" -X POST "$API/api/login" \
   -d "{\"username\":\"$USER_NAME\",\"password\":\"$PASSWORD\"}" > /dev/null
 
 # 直接问库要待结算的订单 id：比解析 JSON 可靠，而且这个脚本本来就依赖 Docker
-IDS=$(docker compose exec -T mysql mysql -N -B -uroot -p"$MYSQL_PWD" bnb \
+IDS=$($COMPOSE exec -T mysql mysql -N -B -uroot -p"$MYSQL_PWD" bnb \
         -e "select id from booking where status = 'CHECKED_OUT' order by id" 2>/dev/null | tr -d '\r')
 
 if [ -z "$IDS" ]; then
