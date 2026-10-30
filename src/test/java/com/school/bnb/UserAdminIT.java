@@ -142,6 +142,29 @@ class UserAdminIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("更新时省略 enabled = 不动启用状态，不能把停用的账号悄悄放回来")
+    void enabledIsPreservedWhenOmitted() throws Exception {
+        String username = "en" + System.nanoTime();
+        var created = userService.save(new UserReq(null, username, "启用测试", "Admin@123", P1, true));
+
+        assertThat(saveUser(created.id(), new UserReq(created.id(), username, "启用测试", null, P1, false)))
+                .isZero();
+        assertThat(loginCode(username, "Admin@123"))
+                .as("停用之后不能登录").isEqualTo(ErrorCode.USER_DISABLED);
+
+        // 只改显示名，enabled 传 null —— 修复前这里会被写成"启用"
+        assertThat(saveUser(created.id(), new UserReq(created.id(), username, "启用测试-改名", null, P1, null)))
+                .isZero();
+        assertThat(loginCode(username, "Admin@123"))
+                .as("省略 enabled 不能把停用的账号放回来").isEqualTo(ErrorCode.USER_DISABLED);
+
+        // 显式传 true 才真正恢复
+        assertThat(saveUser(created.id(), new UserReq(created.id(), username, "启用测试-改名", null, P1, true)))
+                .isZero();
+        assertThat(loginCode(username, "Admin@123")).isZero();
+    }
+
+    @Test
     @DisplayName("不能停用当前登录的账号，也不能让系统里一个店长都不剩")
     void guardsAgainstLockingEveryoneOut() throws Exception {
         MockHttpSession admin = login("admin");

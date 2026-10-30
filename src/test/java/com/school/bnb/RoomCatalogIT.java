@@ -80,8 +80,10 @@ class RoomCatalogIT extends AbstractMysqlIT {
         assertThat(roomService.require(r.getId()).getStatus()).isEqualTo(Room.MAINTENANCE);
 
         assertThat(roomTypeService.list(p.id()).get(0).roomCount()).isEqualTo(1);
-        assertThat(propertyService.list().stream().filter(x -> x.id().equals(p.id()))
-                .findFirst().orElseThrow().roomCount()).isEqualTo(1);
+        PropertyVO listed = propertyService.list().stream()
+                .filter(x -> x.id().equals(p.id())).findFirst().orElseThrow();
+        assertThat(listed.roomCount()).as("房间数改走 group by 聚合后仍要准").isEqualTo(1);
+        assertThat(listed.roomTypeCount()).as("房型数改走 group by 聚合后仍要准").isEqualTo(1);
     }
 
     @Test

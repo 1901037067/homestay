@@ -33,6 +33,9 @@ public class AuthController {
     public R<MeVO> login(@Valid @RequestBody LoginReq req, HttpServletRequest httpReq) {
         LoginInterceptor.LoginUser user = authService.login(req.username(), req.password());
         HttpSession session = httpReq.getSession(true);
+        // 会话固定防护：登录成功必须换一个 session id。否则攻击者预先塞给受害者的 JSESSIONID，
+        // 在受害者登录后就变成一个已授权的会话 —— 换 id 而不是新建会话，已写的属性不受影响
+        httpReq.changeSessionId();
         session.setAttribute(LoginInterceptor.SESSION_KEY, user);
         return R.ok(authService.toMe(user));
     }

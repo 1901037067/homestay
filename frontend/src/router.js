@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 // 路由级懒加载：Element Plus 全量引入后主包 1.1MB，首屏只该拿到登录页要的那部分
 const AppShell = () => import('./layout/AppShell.vue')
 const LoginView = () => import('./views/LoginView.vue')
@@ -31,9 +32,9 @@ const router = createRouter({
         { path: 'rate-rules', component: PriceRuleView },
         { path: 'stats', component: StatsView },
         { path: 'logs', component: OperationLogView },
-        // 账号页只对店长开放。路由留在前端是为了让侧栏能统一渲染，
-        // 真正的拒绝在服务层（AccessScope.requireManager），手敲 URL 也一样吃 1003
-        { path: 'users', component: UserAdminView }
+        // 账号页只对店长开放。真正的拒绝在服务层（AccessScope.requireManager），手敲 URL 也吃 1003；
+        // 这里的 meta 只负责体验：别让前台进到一个每点一下都报错的页面
+        { path: 'users', component: UserAdminView, meta: { manager: true } }
       ]
     }
   ]
@@ -41,9 +42,24 @@ const router = createRouter({
 
 // 守卫只看 localStorage 是不够的（它只是缓存），真正的判定在后端 session：
 // 任何请求 401 时由 api.js 的拦截器统一踢回登录页。
+// 这里唯一多管的是一件体验上的事：店长专属页面前台不该进得去。
 router.beforeEach((to) => {
   if (to.meta.public) return true
-  return localStorage.getItem('bnb_user') ? true : '/login'
+  const raw = localStorage.getItem('bnb_user')
+  if (!raw) return '/login'
+  if (to.meta.manager) {
+    let me = null
+    try {
+      me = JSON.parse(raw)
+    } catch {
+      return '/login' // 缓存坏了当没登录，别让脏数据把路由卡住
+    }
+    if (!me?.manager) {
+      ElMessage.warning('「账号」只有店长可以访问')
+      return '/'
+    }
+  }
+  return true
 })
 
 export default router

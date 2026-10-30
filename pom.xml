@@ -145,9 +145,32 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
-                    <!-- 测试里大量用 LocalDateTime.now()：不钉时区，换台 UTC 机器或 CI 上会整体漂 8 小时 -->
-                    <argLine>-Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8</argLine>
+                    <!--
+                      测试里大量用 LocalDateTime.now()：不钉时区，换台 UTC 机器或 CI 上会整体漂 8 小时。
+                      @{argLine} 是 JaCoCo prepare-agent 注入 agent 的那一段，必须用后期绑定 @{} 而不是 ${}：
+                      ${} 在 surefire 读配置时求值，那时 agent 还没生成，写死就等于把覆盖率插桩整段覆盖掉。
+                    -->
+                    <argLine>@{argLine} -Duser.timezone=Asia/Shanghai -Dfile.encoding=UTF-8</argLine>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.13</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <!-- 版本必须与 Boot 管理的 flyway-core 一致（当前 9.22.3），否则 migrate 与运行时行为分叉 -->

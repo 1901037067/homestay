@@ -285,6 +285,24 @@ class AuthScopeIT extends AbstractMysqlIT {
                 .isEqualTo(ErrorCode.FORBIDDEN);
     }
 
+    @Test
+    @DisplayName("登录成功必须换 sessionId —— 预置的 JSESSIONID 不能被沿用")
+    void loginRotatesSessionId() throws Exception {
+        // 会话固定：攻击者先把一个 JSESSIONID 塞给受害者，受害者用它登录后，那个 id 就成了已授权会话。
+        // 单机演示里风险不高，但既然已经有账号权限了，这一行是白送的
+        MockHttpSession preexisting = new MockHttpSession();
+        String before = preexisting.getId();
+        MockHttpSession after = (MockHttpSession) mockMvc.perform(post("/api/login")
+                        .session(preexisting)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"admin\",\"password\":\"Admin@123\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getRequest().getSession(false);
+        assertThat(after.getId())
+                .as("登录前后的 session id 必须不同")
+                .isNotEqualTo(before);
+    }
+
     // ---------------------------------------------------------------- 夹具
 
     /** 在指定民宿造一对"房型 + 房间"，返回 {房型 id, 房间 id}。 */

@@ -13,6 +13,7 @@ import com.school.bnb.mapper.PropertyMapper;
 import com.school.bnb.mapper.RoomMapper;
 import com.school.bnb.mapper.RoomTypeMapper;
 import com.school.bnb.mapper.SysUserMapper;
+import com.school.bnb.vo.PropertyCount;
 import com.school.bnb.vo.PropertyVO;
 import java.time.LocalTime;
 import java.util.List;
@@ -42,15 +43,27 @@ public class PropertyService {
 
     public List<PropertyVO> list() {
         Long bound = scope.boundPropertyId();
-        return propertyMapper.selectList(new LambdaQueryWrapper<Property>()
-                        .eq(bound != null, Property::getId, bound)
-                        .orderByAsc(Property::getId))
-                .stream()
-                .map(p -> new PropertyVO(
-                        p.getId(), p.getName(), p.getAddress(), p.getDayCutTime(),
-                        p.getOpenTime(), p.getCloseTime(),
-                        countRoomTypes(p.getId()), countRooms(p.getId())))
+        List<Property> properties = propertyMapper.selectList(new LambdaQueryWrapper<Property>()
+                .eq(bound != null, Property::getId, bound)
+                .orderByAsc(Property::getId));
+        if (properties.isEmpty()) {
+            return List.of();
+        }
+        // 原来是"每家店各查两次"（2N 条 SQL）。改成两条 group by 一次取全表，再按 id 取 ——
+        // 数据量小的时候无感，但那是论文里不好写的形状。delete() 里按 id 的计数保持不动：
+        // 它只对一家店判一次，本来就不是 N+1
+        Map<Long, Long> roomTypes = counts(roomTypeMapper.countByProperty());
+        Map<Long, Long> rooms = counts(roomMapper.countByProperty());
+        return properties.stream()
+                .map(p -> PropertyVO.of(p,
+                        roomTypes.getOrDefault(p.getId(), 0L),
+                        rooms.getOrDefault(p.getId(), 0L)))
                 .toList();
+    }
+
+    private static Map<Long, Long> counts(List<PropertyCount> rows) {
+        return rows.stream()
+                .collect(Collectors.toMap(PropertyCount::getPropertyId, PropertyCount::getTotal));
     }
 
     /**

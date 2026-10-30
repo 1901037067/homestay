@@ -63,7 +63,10 @@ public class UserService {
             // 上面的 requireManager() 已经保证这里只有店长能进来
             propertyService.require(req.propertyId());
         }
-        boolean enabled = req.enabled() == null || req.enabled();
+        // 省略 enabled 不能回落成"启用"：更新时保持库里那个值，新建时才默认启用。
+        // 否则调一次"改显示名"就会把停用的账号悄悄放回来 —— 与"部分更新回落成硬编码默认"同族
+        boolean enabled = req.enabled() != null ? req.enabled()
+                : create || Boolean.TRUE.equals(existing.getEnabled());
 
         if (create) {
             if (usernameTaken(username, null)) {

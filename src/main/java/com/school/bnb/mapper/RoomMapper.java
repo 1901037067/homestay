@@ -2,12 +2,17 @@ package com.school.bnb.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.school.bnb.entity.Room;
+import com.school.bnb.vo.PropertyCount;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 public interface RoomMapper extends BaseMapper<Room> {
+
+    /** 一次取全表按民宿聚合的房间数。与 {@link RoomTypeMapper#countByProperty()} 配套收 N+1。 */
+    @Select("select property_id, count(1) as total from room group by property_id")
+    List<PropertyCount> countByProperty();
 
     /**
      * 房间行悲观锁 —— 防超卖的地基（实施计划 3.2 / 1.1），<b>同时把锁里的那一行读回来</b>。

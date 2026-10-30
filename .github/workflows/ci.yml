@@ -13,6 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# 只读就够：这个工作流不写仓库、不发评论、不改 status
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: 后端测试（真 MySQL，Testcontainers）
@@ -38,6 +42,18 @@ jobs:
         with:
           name: surefire-reports
           path: target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # 覆盖率给论文用；压测报告是 W8 的产出，让论文数据能直接从 CI 取，而不是只存在某台机器上
+      - name: 上传覆盖率与压测报告
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-and-bench
+          path: |
+            target/site/jacoco/
+            target/压测报告.md
           if-no-files-found: ignore
           retention-days: 7
 
