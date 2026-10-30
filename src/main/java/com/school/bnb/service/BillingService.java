@@ -209,15 +209,16 @@ public class BillingService {
         // 优先用下单时冻结的基准；历史订单没有快照（V7 之前）才现算，行为与升级前一致。
         // 这一条是审阅指出的漂移风险：14:00→次日12:00 的全日单，若把模板改成 14:00→次日10:00，
         // 结算时起步覆盖从 22 小时变 20 小时，凭空多出两小时超时费
-        PricingFrames.Frames frames = PricingFrames.of(parseSale(b), type, b.getStartTime());
+        PricingFrames.Frames frames = PricingFrames.of(parseSale(b), type, b.getStartTime(), b.getEndTime());
         int covered = b.getCoveredMinutes() == null ? frames.coveredMinutes() : b.getCoveredMinutes();
         int unit = b.getChargeUnitMinutes() == null ? frames.chargeUnitMinutes() : b.getChargeUnitMinutes();
+        int nights = b.getNights() == null ? frames.nights() : b.getNights();
         LocalDateTime calcEnd = calcEnd(b);
         List<RateRuleDef> rules = rateRuleService.enabledRules(d.room().getPropertyId(),
                 d.room().getRoomTypeId());
 
         PriceCalculator.Quote q = PriceCalculator.price(new PriceCalculator.Input(
-                b.getStartTime(), calcEnd, covered, type.getBasePrice(),
+                b.getStartTime(), calcEnd, covered, nights, type.getBasePrice(),
                 type.getExtraHourPrice(), unit, rules));
         return new Plan(d, covered, unit, b.getStartTime(), calcEnd, q);
     }

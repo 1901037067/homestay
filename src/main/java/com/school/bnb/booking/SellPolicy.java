@@ -19,6 +19,9 @@ import java.time.LocalTime;
  */
 public final class SellPolicy {
 
+    /** 相邻两晚模板起点的间隔。全链路 naive 本地时间、无夏令时，所以恒等于 24 小时。 */
+    private static final int DAY_MINUTES = 24 * 60;
+
     /** 一次判定需要的全部输入，由调用方从房间/房型/民宿三张表取出后传进来。 */
     public record Rule(
             String roomStatus,
@@ -106,18 +109,48 @@ public final class SellPolicy {
     }
 
     /**
-     * 全日房模板的区间必须与服务端按房型算出来的完全一致。
+     * 全日房必须<b>从某晚的模板起点开始、按整晚连住到第 N 晚的模板终点</b>。
      *
      * <p>这条同时干两件事：让"跨天就免起步时长"的漏洞失去意义（跨天的 HOURLY 上面已经拒了），
      * 以及防止前端把全日房改成任意时段来绕开定价。
      */
     private static Verdict fullDayCheck(Rule r, LocalDateTime start, LocalDateTime end) {
-        LocalDateTime[] tpl = fullDayRange(start.toLocalDate(), r.fullDayStart(), r.fullDayEnd());
-        if (!start.equals(tpl[0]) || !end.equals(tpl[1])) {
+        if (fullDayNights(start, end, r.fullDayStart(), r.fullDayEnd()) == 0) {
             return fail(ErrorCode.INVALID_TIME_RANGE,
-                    "全日房时段固定为 " + tpl[0] + " → " + tpl[1] + "，请勿自行指定区间");
+                    "全日房只能整晚连住：从 " + r.fullDayStart() + " 起、到某天 " + r.fullDayEnd()
+                            + " 止（订 N 晚就选 N 个整晚），收到 " + start + " → " + end);
         }
         return Verdict.OK;
+    }
+
+    /**
+     * 这个区间是连住几晚；<b>拼不出整数晚就返回 0</b>。
+     *
+     * <p>晚数的<b>唯一权威判据</b>：下单校验、下单时的计费快照、结算时的试算都调它。
+     * 两处各算一遍，就会出现"校验放行 A、计费按 B 收钱"。
+     *
+     * <p>N 晚的总长 = 24 小时 ×(N-1) + 一晚的模板时长。相邻两晚的起点恒差 24 小时
+     * （全链路 naive 本地时间，无夏令时）。中间那些 {@code fullDayEnd → fullDayStart}
+     * 的白天空档<b>算客人留着房</b>，所以整段是一条连续占用行，防超卖口径不用改。
+     *
+     * <p>模板本身比一天还长（晚与晚自相重叠）时这里除不尽，直接判 0 —— 那种配置下
+     * "连住"没有意义，不该假装支持。
+     */
+    public static int fullDayNights(LocalDateTime start, LocalDateTime end,
+                                    LocalTime fullDayStart, LocalTime fullDayEnd) {
+        LocalDateTime[] first = fullDayRange(start.toLocalDate(), fullDayStart, fullDayEnd);
+        if (!start.equals(first[0])) {
+            return 0;
+        }
+        int nightMinutes = (int) Duration.between(first[0], first[1]).toMinutes();
+        long rest = Duration.between(start, end).toMinutes() - nightMinutes;
+        if (rest < 0 || rest % DAY_MINUTES != 0) {
+            return 0;
+        }
+        int nights = (int) (rest / DAY_MINUTES) + 1;
+        LocalDateTime[] last =
+                fullDayRange(start.toLocalDate().plusDays(nights - 1L), fullDayStart, fullDayEnd);
+        return end.equals(last[1]) ? nights : 0;
     }
 
     /**

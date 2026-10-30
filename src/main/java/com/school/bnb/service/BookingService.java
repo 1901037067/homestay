@@ -121,11 +121,14 @@ public class BookingService {
         //   ② 记开单日志 —— 同一张单会出现两条 BOOKING_CREATE，审计上看像开了两次。
         // 典型触发：第一次提交成功但响应超时，前台重试同一个 requestId。
         if (outcome.created()) {
-            // 计费基准在下单时就冻结：结算时再读 room_type 的话，"下单后改房型"会改掉一张旧单的金额
-            PricingFrames.Frames frames = PricingFrames.of(type, ctx.type(), req.startTime());
-            bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(), frames.chargeUnitMinutes());
+            // 计费基准在下单时就冻结：结算时再读 room_type 的话，"下单后改房型"会改掉一张旧单的金额。
+            // 连住晚数同理 —— 它是"这张单当时是怎么卖的"，不是房型的当前配置
+            PricingFrames.Frames frames = PricingFrames.of(type, ctx.type(), req.startTime(), req.endTime());
+            bookingMapper.snapshotPricing(b.getId(), frames.coveredMinutes(),
+                    frames.chargeUnitMinutes(), frames.nights());
             b.setCoveredMinutes(frames.coveredMinutes());
             b.setChargeUnitMinutes(frames.chargeUnitMinutes());
+            b.setNights(frames.nights());
             opLog.record("BOOKING_CREATE", "booking", b.getId(), ctx.property().getId(),
                     String.format("%s %s｜%s → %s（%s）", ctx.room().getRoomNo(), b.getGuestName(),
                             b.getStartTime(), b.getEndTime(), b.getStatus()),
@@ -139,6 +142,13 @@ public class BookingService {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
         assertSellable(ctx, req.startTime(), req.endTime(), parseSaleType(b.getSaleType()));
+        // 计费基准要在内核改占用<b>之前</b>重写：kernel.changeTimes 末尾会回读一次订单，
+        // 放前面它读到的就是新值。改期失败时这条 update 随同一事务回滚，不会留下半套状态。
+        // 加时不走这里 —— 加时按设计是"多出来的时间按超时单价收"，不是多买一晚
+        PricingFrames.Frames frames = PricingFrames.of(parseSaleType(b.getSaleType()), ctx.type(),
+                req.startTime(), req.endTime());
+        bookingMapper.resnapshotPricing(bookingId, frames.coveredMinutes(),
+                frames.chargeUnitMinutes(), frames.nights());
         Booking after = kernel.changeTimes(bookingId, req.startTime(), req.endTime(),
                 ctx.type().getCleanBeforeMinutes(), ctx.type().getCleanAfterMinutes());
         opLog.record("BOOKING_RESCHEDULE", "booking", bookingId, ctx.property().getId(),
@@ -152,8 +162,8 @@ public class BookingService {
     public BookingVO extend(Long bookingId, ExtendReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        // 加时走独立规则：全日房复用下单策略会被"区间必须等于模板"挡住，
-        // 而加时本来就是要偏离模板
+        // 加时走独立规则：全日房复用下单策略会被"必须整晚连住"挡住，
+        // 而加时本来就是要偏离模板终点
         SellPolicy.Verdict v = SellPolicy.checkExtension(
                 rule(ctx.room(), ctx.type(), ctx.property()), b.getStartTime(), b.getEndTime(), req.newEndTime());
         if (!v.sellable()) {

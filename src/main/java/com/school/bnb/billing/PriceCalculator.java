@@ -33,8 +33,9 @@ import java.util.List;
  *       超时是元/小时，同一个数值套两种量纲会算出荒谬金额 ——
  *       "假日一口价 488"若连小时价也一起变成 488，延迟退房一小时就收 976。
  *       起步段只接受 ALL/BASE，超时段只接受 ALL/OVERAGE。</li>
- *   <li><b>起步价按入住时刻定价</b>，超时费按各单元起点定价。所以跨了节假日边界的长住单，
- *       起步价用入住那天的价、后半段用假期的价 —— 这是有意为之，不是漏算。</li>
+ *   <li><b>每一段按自己那一段的起点定价</b>：连住 N 晚就切 N 个起步段，各自按那一晚的入住时刻
+ *       选规则；超时费按各单元起点定价。所以跨了节假日边界的长住单，国庆内那几晚各收一口价、
+ *       外面那几晚各收平时价 —— 而不是整单跟着入住那天走。</li>
  *   <li><b>取整只在单元级发生</b>（HALF_UP 到分），明细金额是它包含的单元金额之和，
  *       合计是明细金额之和。<b>合计永远等于打印出来的分项相加</b>，
  *       不会出现"明细加起来比合计差一分"这种对不上账的脏事。</li>
@@ -45,24 +46,40 @@ public final class PriceCalculator {
     /** 分档时刻只精确到分钟，标签里带上日期，跨零点长单的明细才读得懂。 */
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
+    /** 相邻两晚起点的间隔，与 {@code SellPolicy.fullDayNights} 用的是同一个几何。 */
+    private static final int DAY_MINUTES = 24 * 60;
+
     private PriceCalculator() {
     }
 
     public record Input(LocalDateTime start,
                         LocalDateTime end,
                         int coveredMinutes,
+                        int nights,
                         BigDecimal basePrice,
                         BigDecimal extraHourPrice,
                         int chargeUnitMinutes,
                         List<RateRuleDef> rules) {
+
+        /**
+         * 钟点房与"只住一晚"的全日房走这里 —— 起步段就是一段、一次打包价。
+         *
+         * <p>留着这个旧签名是为了不让 34 条表驱动用例为了一个新字段集体改行：
+         * 它们验的是单晚口径，本来也不该被迫关心连住。
+         */
+        public Input(LocalDateTime start, LocalDateTime end, int coveredMinutes,
+                     BigDecimal basePrice, BigDecimal extraHourPrice,
+                     int chargeUnitMinutes, List<RateRuleDef> rules) {
+            this(start, end, coveredMinutes, 1, basePrice, extraHourPrice, chargeUnitMinutes, rules);
+        }
     }
 
     /**
      * 一条账单明细。
      *
      * @param kind        BASE（起步价）/ OVERAGE（超时费）
-     * @param unitPrice   BASE 是这一单的打包价；OVERAGE 是元/小时
-     * @param unitHint    给前端显示单位用，避免把打包价误读成小时价
+     * @param unitPrice   BASE 是这一晚/这一单的打包价；OVERAGE 是元/小时
+     * @param unitHint    给前端显示单位用，避免把打包价误读成小时价（"打包" / "元/晚" / "元/小时"）
      * @param ruleName    命中的规则名；null = 没有规则命中，走平时价
      * @param amount      该条金额，等于它包含的各个计费单元金额之和
      */
@@ -87,19 +104,8 @@ public final class PriceCalculator {
     public static Quote price(Input in) {
         validate(in);
 
-        RateRuleDef baseRule = selectBest(in.rules(), in.start(), RateRuleDef.AppliesTo.BASE);
-        BigDecimal baseAmount = money(baseRule == null
-                ? in.basePrice()
-                : baseRule.applyTo(in.basePrice()));
-
         List<Line> lines = new ArrayList<>();
-        // 起步段的展示区间取 [start, min(覆盖终点, 实际终点))：订 2 小时却按 3 小时起步价收时，
-        // 明细里画到第 3 小时会让人觉得多收的那一小时真实存在，而它只是"不退"。
-        LocalDateTime baseTo = in.end().isBefore(coveredEnd(in)) ? in.end() : coveredEnd(in);
-        lines.add(new Line("BASE",
-                "起步价（含 " + minutes(in.coveredMinutes()) + "）",
-                in.start(), baseTo, in.coveredMinutes(),
-                baseAmount, "打包", baseRule == null ? null : baseRule.name(), baseAmount));
+        BigDecimal baseAmount = in.nights() > 1 ? baseLinesPerNight(in, lines) : baseLineOnce(in, lines);
 
         BigDecimal overage = BigDecimal.ZERO;
         int units = 0;
@@ -113,6 +119,60 @@ public final class PriceCalculator {
             }
         }
         return new Quote(List.copyOf(lines), baseAmount, overage, baseAmount.add(overage), units);
+    }
+
+    /** 单晚（钟点房与只住一晚的全日房）：起步段就一条，金额是这一单的打包价。 */
+    private static BigDecimal baseLineOnce(Input in, List<Line> lines) {
+        RateRuleDef baseRule = selectBest(in.rules(), in.start(), RateRuleDef.AppliesTo.BASE);
+        BigDecimal baseAmount = money(baseRule == null
+                ? in.basePrice()
+                : baseRule.applyTo(in.basePrice()));
+
+        // 起步段的展示区间取 [start, min(覆盖终点, 实际终点))：订 2 小时却按 3 小时起步价收时，
+        // 明细里画到第 3 小时会让人觉得多收的那一小时真实存在，而它只是"不退"。
+        LocalDateTime baseTo = in.end().isBefore(coveredEnd(in)) ? in.end() : coveredEnd(in);
+        lines.add(new Line("BASE",
+                "起步价（含 " + minutes(in.coveredMinutes()) + "）",
+                in.start(), baseTo, in.coveredMinutes(),
+                baseAmount, "打包", baseRule == null ? null : baseRule.name(), baseAmount));
+        return baseAmount;
+    }
+
+    /**
+     * 连住 N 晚：<b>每晚各自按自己那一晚的起点选规则、各自定价</b>，出 N 条起步明细。
+     *
+     * <p>为什么不是"一口价 × N"：那等于让入住那一天的规则管住后面所有天 —— 9/28 入住订到 10/7，
+     * 要么整单都按平时的 388、要么整单都按国庆的 488，两种都不对。
+     * 而"起步价按入住时刻定价"本来就是"按那一段的起点定价"，连住只是把一段变成 N 段，没有破例。
+     *
+     * <p>每条写的是那一晚真实的 14:00 → 次日 12:00，所以 N 条的<b>分钟数之和小于</b>
+     * {@code coveredMinutes} —— 差的是中间那些 12:00–14:00 的白天空档：客人房没退、含在房费里，
+     * 但它不是一个独立计费单元，不该在明细里凭空长出来。<b>金额之和仍恒等于起步合计</b>，
+     * 这条不变，也是 {@code 明细相加==合计} 那条断言守着的。
+     */
+    private static BigDecimal baseLinesPerNight(Input in, List<Line> lines) {
+        int nightMinutes = nightMinutes(in);
+        BigDecimal total = BigDecimal.ZERO;
+        for (int i = 0; i < in.nights(); i++) {
+            LocalDateTime from = in.start().plusMinutes(DAY_MINUTES * (long) i);
+            LocalDateTime to = from.plusMinutes(nightMinutes);
+            RateRuleDef rule = selectBest(in.rules(), from, RateRuleDef.AppliesTo.BASE);
+            BigDecimal amount = money(rule == null ? in.basePrice() : rule.applyTo(in.basePrice()));
+            total = total.add(amount);
+            lines.add(new Line("BASE",
+                    "起步价 · 第 " + (i + 1) + " 晚（" + from.format(TS) + " → " + to.format(TS) + "）",
+                    from, to, nightMinutes, amount, "元/晚", rule == null ? null : rule.name(), amount));
+        }
+        return total;
+    }
+
+    /**
+     * 反推一晚多少分钟。几何来自 {@code SellPolicy.fullDayNights}：
+     * {@code coveredMinutes = 24h ×(N-1) + 一晚模板时长}，所以移一项就是模板时长。
+     * 最后一晚的 {@code to} 因此正好落在 coveredEnd 上。
+     */
+    private static int nightMinutes(Input in) {
+        return in.coveredMinutes() - DAY_MINUTES * (in.nights() - 1);
     }
 
     // ------------------------------------------------------------------ 切片
@@ -213,6 +273,14 @@ public final class PriceCalculator {
         }
         if (in.coveredMinutes() < 0) {
             throw new IllegalArgumentException("起步覆盖时长不能为负");
+        }
+        if (in.nights() < 1) {
+            throw new IllegalArgumentException("连住晚数至少 1，收到 " + in.nights());
+        }
+        if (in.nights() > 1 && nightMinutes(in) < 1) {
+            throw new IllegalArgumentException("起步覆盖时长与连住晚数不自洽：" + in.nights()
+                    + " 晚要求 coveredMinutes 至少大于 " + DAY_MINUTES * (in.nights() - 1)
+                    + " 分钟，收到 " + in.coveredMinutes());
         }
         if (in.chargeUnitMinutes() < 1) {
             throw new IllegalArgumentException("计费粒度至少 1 分钟，收到 " + in.chargeUnitMinutes());

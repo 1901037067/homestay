@@ -41,9 +41,12 @@ public class Booking {
     private LocalDateTime holdExpireAt;
     private BigDecimal amount;
 
-    /** 下单时快照的起步覆盖时长与计费粒度 —— 结算据此算账，不再读"现在"的房型配置。 */
+    /** 下单时快照的计费基准 —— 结算据此算账，不再读"现在"的房型配置。 */
     private Integer coveredMinutes;
     private Integer chargeUnitMinutes;
+
+    /** 下单时快照的连住晚数。历史行为 null，BillingService 遇到 null 按当次模板现推（必然推成 1 晚）。 */
+    private Integer nights;
     private String remark;
     private Long createdBy;
     private LocalDateTime createdAt;

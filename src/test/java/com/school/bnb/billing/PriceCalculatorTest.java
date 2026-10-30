@@ -406,6 +406,132 @@ class PriceCalculatorTest {
                 mode, new BigDecimal(value), priority, scoped, appliesTo);
     }
 
+    // ------------------------------------------------------------------ 连住
+
+    @Nested
+    @DisplayName("全日房连住：每晚各自按自己那一晚的起点定价")
+    class Nights {
+
+        /** 模板一晚 14:00 → 次日 12:00 = 1320 分；N 晚的覆盖 = 24h×(N-1) + 1320 */
+        private final int night = 1320;
+        private final BigDecimal base388 = new BigDecimal("388.00");
+        private final BigDecimal extra40 = new BigDecimal("40.00");
+        private final LocalDateTime mon = LocalDateTime.of(2026, 10, 5, 14, 0);
+
+        private PriceCalculator.Input in(LocalDateTime start, int nights, LocalDateTime end,
+                                         List<RateRuleDef> rules) {
+            return in(start, nights, end, rules, 1440 * (nights - 1) + night);
+        }
+
+        private PriceCalculator.Input in(LocalDateTime start, int nights, LocalDateTime end,
+                                         List<RateRuleDef> rules, int coveredMinutes) {
+            return new PriceCalculator.Input(start, end, coveredMinutes, nights,
+                    base388, extra40, 60, rules);
+        }
+
+        private List<PriceCalculator.Line> baseLines(PriceCalculator.Quote q) {
+            return q.lines().stream().filter(l -> "BASE".equals(l.kind())).toList();
+        }
+
+        @Test
+        @DisplayName("三晚、没有规则：出三条起步明细，合计 = 3 × 388")
+        void threeNightsNoRules() {
+            PriceCalculator.Quote q = PriceCalculator.price(
+                    in(mon, 3, mon.plusMinutes(1440 * 2 + night), List.of()));
+
+            assertThat(baseLines(q)).hasSize(3);
+            assertThat(baseLines(q)).allSatisfy(l -> assertThat(l.unitHint()).isEqualTo("元/晚"));
+            assertThat(q.baseAmount()).isEqualByComparingTo("1164.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("0.00");
+            assertThat(q.total()).isEqualByComparingTo("1164.00");
+        }
+
+        @Test
+        @DisplayName("跨国庆边界的五晚：国庆内三晚各 488、外面两晚各 388 —— 不是整单一个价")
+        void perNightPricingAcrossHolidayBoundary() {
+            List<RateRuleDef> rules = List.of(
+                    onDates(1, "国庆一口价", 10, true, Mode.OVERRIDE, "488.00", "2026-10-01", "2026-10-07"));
+
+            PriceCalculator.Quote q = PriceCalculator.price(
+                    in(mon, 5, mon.plusMinutes(1440 * 4 + night), rules));
+
+            // 10-05/06/07 三晚命中一口价，10-08/09 两晚走平时价。
+            // 若按"入住那天定价一次再乘 N"，这里会是 2440 或 1940 —— 两个都不对
+            assertThat(baseLines(q)).extracting(PriceCalculator.Line::ruleName)
+                    .containsExactly("国庆一口价", "国庆一口价", "国庆一口价", null, null);
+            assertThat(baseLines(q)).extracting(PriceCalculator.Line::amount)
+                    .containsExactly(new BigDecimal("488.00"), new BigDecimal("488.00"),
+                            new BigDecimal("488.00"), new BigDecimal("388.00"), new BigDecimal("388.00"));
+            assertThat(q.total()).isEqualByComparingTo("2240.00");
+        }
+
+        @Test
+        @DisplayName("周末倍率只改写落在周末的那两晚（周五入住连住三晚）")
+        void weekendRateAppliesOnlyToWeekendNights() {
+            List<RateRuleDef> rules = List.of(
+                    onDays(1, "周末上浮", 100, false, Mode.MULTIPLY, "1.20",
+                            DayOfWeek.SATURDAY, DayOfWeek.SUNDAY));
+            LocalDateTime fri = LocalDateTime.of(2026, 10, 9, 14, 0);
+
+            PriceCalculator.Quote q = PriceCalculator.price(
+                    in(fri, 3, fri.plusMinutes(1440 * 2 + night), rules));
+
+            // 388 + 465.60 + 465.60：周五那晚不打折
+            assertThat(baseLines(q)).extracting(PriceCalculator.Line::amount)
+                    .containsExactly(new BigDecimal("388.00"), new BigDecimal("465.60"),
+                            new BigDecimal("465.60"));
+            assertThat(q.total()).isEqualByComparingTo("1319.20");
+        }
+
+        @Test
+        @DisplayName("N 条起步明细金额之和恒等于起步合计，也恒等于合计减超时")
+        void nightLineAmountsAlwaysSumUp() {
+            List<RateRuleDef> rules = List.of(
+                    onDates(1, "国庆一口价", 10, true, Mode.OVERRIDE, "488.00", "2026-10-01", "2026-10-07"),
+                    onDays(2, "周末上浮", 100, false, Mode.MULTIPLY, "1.20",
+                            DayOfWeek.SATURDAY, DayOfWeek.SUNDAY));
+            LocalDateTime coveredEnd = mon.plusMinutes(1440 * 6 + night);
+
+            PriceCalculator.Quote q = PriceCalculator.price(in(mon, 7, coveredEnd.plusHours(5), rules));
+
+            BigDecimal sum = baseLines(q).stream().map(PriceCalculator.Line::amount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            assertThat(sum).isEqualByComparingTo(q.baseAmount());
+            assertThat(q.baseAmount().add(q.overageAmount())).isEqualByComparingTo(q.total());
+            // 晚与晚之间那些 12:00–14:00 含在房费里、不是独立计费单元，所以分钟数之和不等于覆盖时长
+            assertThat(baseLines(q)).hasSize(7);
+            assertThat(baseLines(q).stream().mapToInt(PriceCalculator.Line::chargeMinutes).sum())
+                    .isEqualTo(7 * night);
+        }
+
+        @Test
+        @DisplayName("住满三晚再拖到次日 15:00：三晚房费 + 3 小时超时，超时从最后一晚终点起算")
+        void lateCheckoutBillsOvertimeAfterAllNights() {
+            LocalDateTime coveredEnd = mon.plusMinutes(1440 * 2 + night);
+
+            PriceCalculator.Quote q = PriceCalculator.price(in(mon, 3, coveredEnd.plusHours(3), List.of()));
+
+            assertThat(q.baseAmount()).isEqualByComparingTo("1164.00");
+            assertThat(q.overageAmount()).isEqualByComparingTo("120.00");
+            assertThat(q.total()).isEqualByComparingTo("1284.00");
+        }
+
+        @Test
+        @DisplayName("晚数与覆盖时长不自洽要直接抛，不该算出一个看不懂的价")
+        void rejectsInconsistentNights() {
+            LocalDateTime end = mon.plusMinutes(1440 * 2 + night);
+            // 显式给一个合法的覆盖时长：辅助方法按晚数反算 covered，传 0 会先撞上"覆盖为负"那条
+            assertThatThrownBy(() -> PriceCalculator.price(in(mon, 0, end, List.of(), night)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("连住晚数");
+
+            // 说 3 晚却只给一晚的覆盖时长：反推出来一晚是负数分钟
+            assertThatThrownBy(() -> PriceCalculator.price(in(mon, 3, end, List.of(), night)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("不自洽");
+        }
+    }
+
     private static RateRuleDef onDays(long id, String name, int priority, boolean scoped,
                                       Mode mode, String value, DayOfWeek... days) {
         return new RateRuleDef(id, name, EnumSet.copyOf(Set.of(days)), null, null, null, null,

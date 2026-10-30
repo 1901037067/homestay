@@ -181,7 +181,7 @@ class OccupancyTruthIT extends AbstractMysqlIT {
     // --------------------------------------------- ④ 全日房可以加时
 
     @Test
-    @DisplayName("④ 全日房延迟退房：加时不该被'区间必须等于模板'挡住")
+    @DisplayName("④ 全日房延迟退房：加时不该被'必须整晚连住'挡住")
     void fullDayBookingCanBeExtended() {
         Room r = room(2, 0, 30);
         BookingVO b = book(r.getId(), TODAY.withHour(14), TODAY.plusDays(1).withHour(12), "FULL_DAY", null);

@@ -140,11 +140,14 @@
               <el-option v-for="h in [1, 2, 3, 4, 6, 8, 10, 12]" :key="h" :label="`${h} 小时`" :value="h" />
             </el-select>
           </el-form-item>
+          <el-form-item v-else label="连住">
+            <el-input-number v-model="form.nights" :min="1" :max="60" style="width: 100%" />
+          </el-form-item>
         </div>
 
         <div class="preview">
           {{ previewText }}
-          <span v-if="form.mode === 'fullday'" class="bnb-muted">（次日结束）</span>
+          <span v-if="form.mode === 'fullday'" class="bnb-muted">{{ endHint }}</span>
         </div>
 
         <el-form-item label="客人姓名" required>
@@ -252,13 +255,13 @@ const editStart = ref('')
 const editEnd = ref('')
 const editError = ref('')
 const form = reactive({
-  room: null, mode: 'hourly', start: '14:00', hours: 3, guest: '', phone: '', requestId: ''
+  room: null, mode: 'hourly', start: '14:00', hours: 3, nights: 1, guest: '', phone: '', requestId: ''
 })
 
 // 内容一变就换幂等键。retry 时内容没变 → 同一个键 → 后端回放原单；
 // 前台在弹窗里改了时段再提交 → 新键 → 开新单，而不是"返回旧单却提示新时段成功"。
 watch(
-  () => [form.room?.roomId, form.mode, form.start, form.hours],
+  () => [form.room?.roomId, form.mode, form.start, form.hours, form.nights],
   () => {
     if (bookDlg.value) form.requestId = newRequestId()
   }
@@ -364,7 +367,10 @@ const previewEnd = computed(() => {
     const [h, m] = form.room.fullDayStart.split(':').map(Number)
     const start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m)
     const [eh, em] = form.room.fullDayEnd.split(':').map(Number)
-    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, eh, em)
+    // 连住 N 晚 = 起点日 + N 天的那个模板结束时刻。与后端 SellPolicy.fullDayNights 同一几何：
+    // 相邻两晚起点恒差 24 小时，中间 12:00–14:00 的空档算客人留着房，整段是一条连续占用
+    const nights = Math.max(1, form.nights || 1)
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + nights, eh, em)
     return { start, end }
   }
   // 开始时间理论上不可清空（选择器关掉了 clearable），但这里仍然兜一层：
@@ -381,7 +387,22 @@ const previewEnd = computed(() => {
 const previewText = computed(() => {
   const p = previewEnd.value
   if (!p) return ''
-  return `${clock(p.start)} → ${clock(p.end)}（${humanMinutes(diffMinutes(p.start, p.end))}）`
+  // 全日房写"连住几晚"而不是总小时数：240 小时对前台没有意义，10 晚才是
+  const tail = form.mode === 'fullday'
+    ? `连住 ${Math.max(1, form.nights || 1)} 晚`
+    : humanMinutes(diffMinutes(p.start, p.end))
+  return `${clock(p.start)} → ${clock(p.end)}（${tail}）`
+})
+
+/**
+ * 结束那一头的提示。写死"次日结束"在连住多于两晚时就是假话 ——
+ * 三晚是隔两天才走，前台照这句话排保洁就排错了。多晚直接给出住到哪天。
+ */
+const endHint = computed(() => {
+  const p = previewEnd.value
+  if (!p || form.mode !== 'fullday') return ''
+  const nights = Math.max(1, form.nights || 1)
+  return nights === 1 ? '（次日结束）' : `（住到 ${fmt(p.end).slice(5, 10)}）`
 })
 
 const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
@@ -401,6 +422,7 @@ function onCellClick(room, offset) {
     mode: 'hourly',
     start: cellHour(offset),
     hours: 3,
+    nights: 1,
     guest: '',
     phone: '',
     requestId: newRequestId()

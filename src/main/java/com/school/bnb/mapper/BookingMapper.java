@@ -79,13 +79,31 @@ public interface BookingMapper extends BaseMapper<Booking> {
 
     /**
      * 下单时把计费基准冻结到订单上。单独一条 update 而不是塞进 insert：
-     * 这两个值来自房型（service 层才拿得到），而 insert 在内核里。
+     * 这些值来自房型（service 层才拿得到），而 insert 在内核里。
+     *
+     * <p>{@code where covered_minutes is null} 是幂等回放的护栏：重试同一个 requestId 时
+     * 不能再拿"现在的"房型配置覆盖下单时冻结的那一份。
      */
     @Update("""
-            update booking set covered_minutes = #{covered}, charge_unit_minutes = #{unit}
+            update booking set covered_minutes = #{covered}, charge_unit_minutes = #{unit},
+                   nights = #{nights}
             where id = #{id} and covered_minutes is null
             """)
-    int snapshotPricing(@Param("id") Long id, @Param("covered") int covered, @Param("unit") int unit);
+    int snapshotPricing(@Param("id") Long id, @Param("covered") int covered,
+                        @Param("unit") int unit, @Param("nights") int nights);
+
+    /**
+     * 改期后重写计费基准。与 {@link #snapshotPricing} 分成两条是有意的：
+     * 那条带 {@code covered_minutes is null} 护栏，幂等回放不能覆盖下单时冻结的值；
+     * 而改期本身就是"重新卖一次哪几晚"，不重写的话 10 晚改成 3 晚会照 10 晚收钱。
+     */
+    @Update("""
+            update booking set covered_minutes = #{covered}, charge_unit_minutes = #{unit},
+                   nights = #{nights}
+            where id = #{id}
+            """)
+    int resnapshotPricing(@Param("id") Long id, @Param("covered") int covered,
+                          @Param("unit") int unit, @Param("nights") int nights);
 
     /**
      * 结算。<b>把金额和状态在同一条 update 里写完</b>，不留"状态改了、钱还没落"的中间态；

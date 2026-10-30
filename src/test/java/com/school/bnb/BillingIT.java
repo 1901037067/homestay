@@ -105,6 +105,36 @@ class BillingIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("连住三晚：晚数与覆盖时长下单即冻结，明细一条一晚，试算=结算")
+    void multiNightBillsOneLinePerNight() throws Exception {
+        MockHttpSession session = login();
+        Room room = room("388.00", 2, "40.00", 60);
+        // 房型模板 14:00 → 次日 12:00，连住三晚 = DAY 14:00 → DAY+3 12:00
+        long id = booking(session, room, DAY.withHour(14), DAY.plusDays(3).withHour(12), "FULL_DAY");
+
+        Booking b = bookingMapper.selectById(id);
+        assertThat(b.getNights()).as("晚数属于这张单当时怎么卖的一部分，必须冻结").isEqualTo(3);
+        assertThat(b.getCoveredMinutes()).as("覆盖 = 24h×2 + 一晚模板 22h").isEqualTo(1440 * 2 + 1320);
+
+        JsonNode preview = json(post("/api/bookings/" + id + "/bill/preview").session(session));
+        assertThat(preview.path("data").path("lines")).hasSize(3);
+        assertThat(preview.path("data").path("totalAmount").decimalValue()).isEqualByComparingTo("1164.00");
+
+        // 住满三晚又拖三小时：三晚房费照收，多出来的是超时，不是第四晚
+        checkOutAt(session, id, DAY.plusDays(3).withHour(15));
+        JsonNode settled = json(post("/api/bookings/" + id + "/settle").session(session));
+        assertThat(settled.path("data").path("lines")).hasSize(4);
+        assertThat(settled.path("data").path("totalAmount").decimalValue()).isEqualByComparingTo("1284.00");
+
+        BigDecimal printed = new BigDecimal("0");
+        for (JsonNode line : settled.path("data").path("lines")) {
+            printed = printed.add(line.path("amount").decimalValue());
+        }
+        assertThat(printed).as("打印出来的分项永远加得上合计")
+                .isEqualByComparingTo(settled.path("data").path("totalAmount").decimalValue());
+    }
+
+    @Test
     @DisplayName("改了价不回溯已结算账单 —— 这正是存快照的全部理由")
     void rateChangeDoesNotRewriteHistory() throws Exception {
         MockHttpSession session = login();
