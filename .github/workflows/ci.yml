@@ -41,6 +41,31 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # "BUILD SUCCESS" 不等于"该跑的都跑了"——surefire 漏收 *IT.java 就是这么假绿过。
+      # 所以把逐类报告加总出来的条数摊在运行页上，谁都能一眼核。
+      - name: 把测试条数写进任务摘要
+        if: ${{ !cancelled() }}
+        run: |
+          if ls target/surefire-reports/*.txt >/dev/null 2>&1; then
+            awk -F'[:,]' '/^Tests run:/ {
+                for (i = 1; i <= NF; i++) {
+                  if ($i ~ /Tests run/)  t += $(i+1)
+                  if ($i ~ /Failures/)  f += $(i+1)
+                  if ($i ~ /Errors/)    e += $(i+1)
+                  if ($i ~ /Skipped/)   s += $(i+1)
+                }
+              }
+              END { printf "| 后端 | %d 条 | 失败 %d | 错误 %d | 跳过 %d |\n", t, f, e, s }' \
+              target/surefire-reports/*.txt > /tmp/counts.md
+            { echo "## 测试条数（由 surefire 逐类报告加总，不是估的）"; echo;
+              echo "| 项 | 数 | 说明 |"; echo "|---|---|---|"; cat /tmp/counts.md; } \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 测试条数" > "$GITHUB_STEP_SUMMARY"
+            echo "没有 surefire 报告 —— 构建在跑测试之前就失败了" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cat /tmp/counts.md 2>/dev/null || true
+
   frontend:
     name: 前端测试与构建
     runs-on: ubuntu-latest

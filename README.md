@@ -1,5 +1,7 @@
 # 民宿房源管理与分时预订系统
 
+[![CI](https://github.com/1901037067/homestay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/1901037067/homestay/actions/workflows/ci.yml)
+
 本科毕业设计项目。前台单机使用，不做 C 端预订、不做支付、不做渠道同步、不做 RBAC。
 设计与取舍的完整论证见 [毕设-民宿分时预订系统-实施计划.md](毕设-民宿分时预订系统-实施计划.md)。
 
