@@ -448,6 +448,10 @@ RR 的延迟与累计等待时间更大。**只报差异，不做归因** ——
 mvn -B test
 ```
 
+每次 push 到 `main` 都由 GitHub Actions 跑一遍上面这条（外加前端的 `npm test` 与 `npm run build`），
+运行页的**任务摘要**里摊着由 surefire 逐类报告加总的条数 —— 绿勾只说明没失败，
+那个数字才说明"该跑的确实跑了"。
+
 | 测试 | 证明什么 |
 |---|---|
 | `FlywaySchemaIT` | 迁移真的建出**9 张** InnoDB/utf8mb4 表（精确集合，多一张少一张都红）；10 个外键精确齐备；`uk_booking_kind` 两列、`uk_booking_bill` 单列唯一；`idx_block` 列序正确；`LocalDateTime` 经 JDBC **真写再真读**回一致（不只是比对 SQL 字面量） |
