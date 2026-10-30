@@ -20,7 +20,9 @@ echo "==> 1/4 重建 schema（Flyway 历史记录随之清空）"
 docker compose exec -T mysql mysql -uroot -p"$MYSQL_PWD" \
   -e "drop database if exists bnb; create database bnb character set utf8mb4 collate utf8mb4_0900_ai_ci;"
 
-echo "==> 2/4 跑迁移 V1–V7（结构 + 结构性种子 + 幂等键/日志/计费/价格快照）"
+# 这里故意不写"V1–V7"这种范围：迁移只会往上加，写死的范围每加一版就过期一次。
+# 下一步的 flyway:info 会把真实版本表打出来，那才是权威清单。
+echo "==> 2/4 跑全部迁移（清单见 src/main/resources/db/migration）"
 sh "$MVN" -B -q flyway:migrate
 
 echo "==> 3/4 校验迁移版本"

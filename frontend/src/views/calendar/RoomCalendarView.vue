@@ -332,8 +332,18 @@ function blkStyle(b) {
 }
 
 function rangeText(b) {
-  const crosses = parse(b.endTime).getDate() !== parse(b.startTime).getDate()
-  return `${clock(parse(b.startTime))}–${crosses ? '次日 ' : ''}${clock(parse(b.endTime))}`
+  const s = parse(b.startTime)
+  const e = parse(b.endTime)
+  // "次日"只在真的差一天时成立。连住三晚的块每天都画在当天窗口里，
+  // 若仍写"次日 12:00"，前台会以为这位明天就走 —— 排房和保洁都会排错
+  const dayMs = 86400000
+  const days = Math.round(
+    (new Date(e.getFullYear(), e.getMonth(), e.getDate()).getTime()
+      - new Date(s.getFullYear(), s.getMonth(), s.getDate()).getTime()) / dayMs)
+  let tail = ''
+  if (days === 1) tail = '次日 '
+  else if (days > 1) tail = `${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')} `
+  return `${clock(s)}–${tail}${clock(e)}`
 }
 
 function tip(b) {

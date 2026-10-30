@@ -153,7 +153,33 @@ select b.room_id, b.id, b.start_time, b.end_time, b.start_time,
 from booking b where b.booking_no = 'H20260301';
 
 -- ---------------------------------------------------------------------------
--- 5) 全日房标识。sale_type 是"声明"不是"推断"（实施计划 2.5 第 2 条）：
+-- 5) 连住三晚的全日房。
+--
+--    sale_type 与 nights 都是**声明**，不靠推断：区间必须正好是模板的整数晚
+--    （今天 14:00 → 第三天 12:00），晚数直接写死 3。这里不写 nights 也能靠
+--    BillingService 现推兜住，但演示数据就该把快照字段摆全 —— 答辩时有人
+--    打开库看"这张单订了几晚"，答案应该在行里，不在一段推导里。
+--
+--    amount 留 0.00：和文件开头那条原则一样，金额由计费引擎在结算时产出，
+--    手写一个数就会和 /bill/preview 对不上。而且这一张跨的星期几随 curdate() 移动，
+--    周末倍率会不会命中都不确定，根本没有"正确"的静态金额可写。
+--
+--    结算前打开账单试算，能看到一晚一行、各自按那一晚的规则定价。
+-- ---------------------------------------------------------------------------
+insert into booking (booking_no, room_id, guest_name, guest_phone, start_time, end_time,
+                     status, sale_type, nights, amount, created_by) values
+  ('F20260206', 8, '陈泽', '138_0000_0206', curdate() + interval 14 hour,
+   date_add(curdate(), interval 3 day) + interval 12 hour,
+   'CONFIRMED', 'FULL_DAY', 3, 0.00, 1);
+
+insert into occupancy (room_id, booking_id, start_time, end_time, block_start, block_end, kind)
+select b.room_id, b.id, b.start_time, b.end_time,
+       date_sub(b.start_time, interval 15 minute),
+       date_add(b.end_time, interval 60 minute), 'ROOM'
+from booking b where b.booking_no = 'F20260206';
+
+-- ---------------------------------------------------------------------------
+-- 6) 全日房标识。sale_type 是"声明"不是"推断"（实施计划 2.5 第 2 条）：
 --    W5 之前用"跨天就算全日房"倒推，被 22:00→次日 00:30（只有 2.5 小时）证伪 ——
 --    所以这里逐条点名，绝不在 SQL 里写 `end_time 跨天 then FULL_DAY` 这种判断。
 --    漏掉这一段的后果是实的：全日单会被当成钟点房计费，
