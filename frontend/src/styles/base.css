@@ -139,6 +139,13 @@ button,
   border-bottom: 1px solid var(--bnb-separator);
 }
 
+/* 卡片头右侧的计数是"配角"：筛选栏变长时它不该被压成两行（"共 19 / 单"），
+   也不该反过来把筛选栏挤窄。中文能逐字折行，所以必须显式 nowrap */
+.bnb-card__head > .count {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .bnb-card__title {
   font-size: var(--bnb-fs-body);
   font-weight: 600;

@@ -407,4 +407,33 @@ class BookingFlowIT extends AbstractMysqlIT {
                     .isEqualTo(Booking.CONFIRMED.equals(status) ? 1 : 0);
         }
     }
+
+    // ------------------------------------------------------------ 列表筛选
+
+    @Test
+    @DisplayName("订单列表按入住时刻筛，半开区间 [from, to)：卡在边界上的那一单只归一天")
+    void listFiltersByStartTimeHalfOpen() {
+        Room r = plainRoom();
+        LocalDateTime d1 = LocalDateTime.of(2026, 11, 10, 9, 0);
+        LocalDateTime d2 = LocalDateTime.of(2026, 11, 11, 9, 0);
+        LocalDateTime d3 = LocalDateTime.of(2026, 11, 12, 9, 0);
+        for (LocalDateTime d : List.of(d1, d2, d3)) {
+            bookingService.create(req(r.getId(), d, d.plusHours(3)));
+        }
+
+        assertThat(starts(r.getId(), d1.toLocalDate().atStartOfDay(), d2.toLocalDate().atStartOfDay()))
+                .as("11-10 那天只该有 d1").containsExactly(d1);
+        assertThat(starts(r.getId(), d2.toLocalDate().atStartOfDay(), d3.toLocalDate().atStartOfDay()))
+                .as("11-11 那天只该有 d2").containsExactly(d2);
+        assertThat(starts(r.getId(), d2, d2))
+                .as("to 是开区间：区间空了就查不到任何单").isEmpty();
+        assertThat(starts(r.getId(), d2, null))
+                .as("只给 from 时往后不限").containsExactly(d2, d3);
+    }
+
+    /** 按筛选条件取回来的入住时刻，升序 —— 本组只验筛选，不关心列表的 id 倒序 */
+    private List<LocalDateTime> starts(Long roomId, LocalDateTime from, LocalDateTime to) {
+        return bookingService.list(1, 50, null, roomId, null, from, to).getRecords().stream()
+                .map(BookingVO::startTime).sorted().toList();
+    }
 }

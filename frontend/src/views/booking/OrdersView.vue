@@ -13,6 +13,18 @@
           <el-select v-model="query.status" placeholder="全部状态" clearable style="width: 170px" @change="reload">
             <el-option v-for="s in STATUSES" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
+          <!-- 筛的是「入住时刻」，不是"这几天在住" —— 后端 from/to 就是打在 start_time 上的半开区间 -->
+          <el-date-picker
+            v-model="query.range"
+            type="daterange"
+            style="width: 240px; flex: 0 0 240px"
+            range-separator="→"
+            start-placeholder="入住起"
+            end-placeholder="入住止"
+            value-format="YYYY-MM-DD"
+            unlink-panels
+            @change="reload"
+          />
           <el-input
             v-model="query.keyword"
             placeholder="客人或单号"
@@ -122,7 +134,15 @@ const loading = ref(false)
 const billDlg = ref(false)
 const billRef = ref()
 const pendingOnly = ref(false)
-const query = reactive({ page: 1, size: 20, status: null, keyword: '' })
+const query = reactive({ page: 1, size: 20, status: null, keyword: '', range: null })
+
+/** 'YYYY-MM-DD' → 次日零点。把"选中的那两天"变成半开区间 [起, 次日 00:00)，与后端口径一致 */
+function nextDay(day) {
+  const [y, m, d] = day.split('-').map(Number)
+  const t = new Date(y, m - 1, d + 1)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`
+}
 
 const money = (v) => Number(v).toFixed(2)
 const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
@@ -152,6 +172,10 @@ async function load() {
     const params = new URLSearchParams({ page: query.page, size: query.size })
     if (query.status) params.set('status', query.status)
     if (query.keyword) params.set('keyword', query.keyword)
+    if (query.range?.length === 2) {
+      params.set('from', `${query.range[0]}T00:00:00`)
+      params.set('to', `${nextDay(query.range[1])}T00:00:00`)
+    }
     const res = await http.get(`/bookings?${params.toString()}`)
     rows.value = res.data.records
     total.value = res.data.total
