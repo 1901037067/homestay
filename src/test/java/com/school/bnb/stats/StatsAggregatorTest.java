@@ -156,6 +156,47 @@ class StatsAggregatorTest {
         }
 
         @Test
+        @DisplayName("排行金额也按明细摊：三晚单只查一天，排行是那天的 388 而不是整单 1164")
+        void rankingUsesSpreadRevenueNotWholeAmount() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-10T14:00", "2026-11-13T12:00", null, "1164.00");
+            stay.setNights(3);
+            stay.setLines(List.of(
+                    line("2026-11-10T14:00", "2026-11-11T12:00", "388.00"),
+                    line("2026-11-11T14:00", "2026-11-12T12:00", "388.00"),
+                    line("2026-11-12T14:00", "2026-11-13T12:00", "388.00")));
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D1, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.totalRevenue()).isEqualByComparingTo("388.00");
+            assertThat(r.ranking()).hasSize(1);
+            assertThat(r.ranking().get(0).revenue())
+                    .as("排行必须和指标卡同源，否则会出现日营收 388、排行 1164").isEqualByComparingTo("388.00");
+            assertThat(r.ranking().get(0).soldTimes()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("入住日不在区间、但区间内有几晚的钱：排行要出现那一行（次数为 0）")
+        void rankingShowsRevenueThatLandedInWindow() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-09T14:00", "2026-11-12T12:00", null, "1164.00");
+            stay.setNights(3);
+            stay.setLines(List.of(
+                    line("2026-11-09T14:00", "2026-11-10T12:00", "388.00"),
+                    line("2026-11-10T14:00", "2026-11-11T12:00", "388.00"),
+                    line("2026-11-11T14:00", "2026-11-12T12:00", "388.00")));
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D1, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.ranking()).hasSize(1);
+            assertThat(r.ranking().get(0).revenue()).isEqualByComparingTo("388.00");
+            assertThat(r.ranking().get(0).soldTimes())
+                    .as("住是前一天开始的，这一天的次数是 0，但钱落在这一天").isZero();
+        }
+
+        @Test
         @DisplayName("没有账单明细时退回整单归入住日 —— 与引入分摊之前完全一致")
         void revenueWithoutLinesFallsBackToCheckInDay() {
             StatRow stay = row(1L, 1L, "201", "SETTLED",

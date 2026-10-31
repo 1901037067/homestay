@@ -113,7 +113,7 @@ public final class StatsAggregator {
             spreadRoomNights(r, acc, cutHour, cutMinute);
             // 营收也摊到明细各自的营业日，同样要在 continue 之前：一张入住日落在区间外的
             // 连住单，它落在区间内的那几晚的钱也该算进这段窗口
-            spreadRevenue(r, acc, cutHour, cutMinute);
+            spreadRevenue(r, acc, rank, cutHour, cutMinute);
 
             LocalDate bd = businessDay(r.getStartTime(), cutHour, cutMinute);
             DailyAcc d = acc.get(bd);
@@ -139,11 +139,9 @@ public final class StatsAggregator {
                 }
             }
 
-            RankAcc ra = rank.computeIfAbsent(r.getRoomId(), id -> new RankAcc(r.getRoomNo()));
-            ra.soldTimes++;
-            if (SETTLED.equals(r.getStatus())) {
-                ra.revenue = ra.revenue.add(money(r.getAmount()));
-            }
+            // 排行只在这里数"卖出次数"（按入住单数），金额由 spreadRevenue 按明细摊进来 ——
+            // 两处口径不同但都要写清，详见 spreadRevenue 的注释
+            rank.computeIfAbsent(r.getRoomId(), id -> new RankAcc(r.getRoomNo())).soldTimes++;
         }
 
         List<Daily> daily = new ArrayList<>(acc.size());
@@ -198,32 +196,48 @@ public final class StatsAggregator {
     }
 
     /**
-     * 把已结算金额摊到<b>每条账单明细各自起点</b>所在的营业日。
+     * 把已结算金额摊到<b>每条账单明细各自起点</b>所在的营业日，同时按同一份数字累进房间排行。
      *
      * <p>为什么要摊：连住三晚的单只把整笔钱记在入住那天，跨月时十月会虚高、十一月是零。
      * 摊开之后，"这个营业日挣了多少钱"才和"这个营业日卖了几间房"对得上 ——
      * 房晚本来就是按每晚摊的，营收不摊就是两张互相解释不通的表。
      *
+     * <p><b>排行必须和指标卡同源</b>：金额也从这里累，不能在外面按整单 {@code r.getAmount()} 加。
+     * 否则查第一天时会出现"日营收 388、排行 1164"，或者"日营收有 388、排行里压根没这间房"。
+     * 排行的<b>次数</b>仍按入住单数（在主线里加，且只有入住日落在区间内才数）——
+     * 所以"入住日不在区间、但区间内有几晚的钱"这种情况，排行会是一行 0 次 / 388 元。
+     * 页面文案要把这两条口径都写出来。
+     *
      * <p>没有明细（历史数据 / 账单行缺失 / JSON 解析失败）就<b>整单归入住日</b>：
      * 与引入分摊之前完全一致。宁可口径退回旧的，也不能因为缺一条明细把营收丢掉。
      */
     private static void spreadRevenue(StatRow r, Map<LocalDate, DailyAcc> acc,
-                                      int cutHour, int cutMinute) {
+                                      Map<Long, RankAcc> rank, int cutHour, int cutMinute) {
         if (!SETTLED.equals(r.getStatus())) {
             return;
         }
+        BigDecimal inWindow = BigDecimal.ZERO;
         if (r.getLines() == null || r.getLines().isEmpty()) {
             DailyAcc d = acc.get(businessDay(r.getStartTime(), cutHour, cutMinute));
             if (d != null) {
-                d.revenue = d.revenue.add(money(r.getAmount()));
+                BigDecimal amt = money(r.getAmount());
+                d.revenue = d.revenue.add(amt);
+                inWindow = inWindow.add(amt);
             }
-            return;
+        } else {
+            for (BillDetailLine line : r.getLines()) {
+                DailyAcc d = acc.get(businessDay(line.from(), cutHour, cutMinute));
+                if (d != null) {
+                    BigDecimal amt = money(line.amount());
+                    d.revenue = d.revenue.add(amt);
+                    inWindow = inWindow.add(amt);
+                }
+            }
         }
-        for (BillDetailLine line : r.getLines()) {
-            DailyAcc d = acc.get(businessDay(line.from(), cutHour, cutMinute));
-            if (d != null) {
-                d.revenue = d.revenue.add(money(line.amount()));
-            }
+        // 只有真的有钱落进这段窗口才建排行行：否则一张完全在区间外的单会留下一条 0/0 的空行
+        if (inWindow.signum() != 0) {
+            RankAcc ra = rank.computeIfAbsent(r.getRoomId(), id -> new RankAcc(r.getRoomNo()));
+            ra.revenue = ra.revenue.add(inWindow);
         }
     }
 

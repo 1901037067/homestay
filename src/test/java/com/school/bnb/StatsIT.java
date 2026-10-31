@@ -122,6 +122,23 @@ class StatsIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("排行也按区间内的明细金额：三晚单只查中间那天，排行是那天的 100")
+    void rankingUsesSpreadRevenue() throws Exception {
+        LocalDateTime start = LocalDateTime.parse("2026-11-10T14:00");
+        LocalDateTime end = LocalDateTime.parse("2026-11-13T12:00");
+        BookingVO b = bookingService.create(new CreateBookingReq(roomA, "连住排行", null,
+                start, end, Booking.CONFIRMED, null, "FULL_DAY", null));
+        kernel.checkIn(b.id(), start);
+        kernel.checkOut(b.id(), end, 0);
+        billingService.settle(b.id());
+
+        // 11-11 是中间那一晚：入住日 11-10 在区间外，钱却落在这一天
+        JsonNode ranking = report("2026-11-11", "2026-11-11").path("data").path("ranking");
+        assertThat(ranking).hasSize(1);
+        assertThat(ranking.get(0).path("revenue").decimalValue()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
     @DisplayName("连住三晚在真实数据上是三个房晚：三个营业日各出现一次售出房间")
     void reportCountsOneRoomNightPerStayedDay() throws Exception {
         // 走 SQL 而不只是纯函数：StatsMapper 若漏了 coalesce(b.nights, 1)，聚合器拿到的

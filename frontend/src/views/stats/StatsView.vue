@@ -78,7 +78,10 @@
     <div class="bnb-card chart-card">
       <div class="bnb-card__head">
         <span class="bnb-card__title">房间营收排行</span>
-        <span class="bnb-muted hint">只统计所选区间内已结算的金额</span>
+        <span class="bnb-muted hint">
+          金额按<b>落在所选区间内的账单明细</b>累加（与指标卡同源），次数按<b>入住单数</b> ——
+          所以会出现"0 次但金额不为零"的行：那笔钱是更早入住的一张单留下的
+        </span>
       </div>
       <div ref="rankEl" class="chart chart--rank" />
     </div>
