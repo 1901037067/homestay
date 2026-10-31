@@ -13,10 +13,17 @@
           <el-select v-model="query.action" placeholder="全部动作" clearable style="width: 190px" @change="reload">
             <el-option v-for="a in ACTIONS" :key="a.value" :label="a.label" :value="a.value" />
           </el-select>
-          <el-select v-model="query.username" placeholder="全部操作人" clearable style="width: 150px" @change="reload">
-            <el-option label="admin（店长）" value="admin" />
-            <el-option label="staff（前台）" value="staff" />
-          </el-select>
+          <!-- 这里原来是写死的 admin / staff 两项。账号体系早就能建 front01 这类新账号，
+               按操作人筛选却选不到他们 —— 而且 /api/users 是店长专属，前台看日志会吃 1003，
+               所以用输入框而不是拉账号列表 -->
+          <el-input
+            v-model="query.username"
+            placeholder="操作人用户名"
+            clearable
+            style="width: 150px"
+            @keyup.enter="reload"
+            @clear="reload"
+          />
         </div>
         <span class="bnb-muted count">共 {{ total }} 条</span>
       </div>
@@ -88,6 +95,7 @@ const ACTIONS = [
   { value: 'BOOKING_CHECK_IN', label: '入住' },
   { value: 'BOOKING_CHECK_OUT', label: '退房' },
   { value: 'BOOKING_EXTEND', label: '加时' },
+  { value: 'BOOKING_ADD_NIGHT', label: '加一晚' },
   { value: 'BOOKING_RESCHEDULE', label: '改期' },
   { value: 'BOOKING_CANCEL', label: '取消' },
   { value: 'CLEANING_DONE', label: '清扫完成' },

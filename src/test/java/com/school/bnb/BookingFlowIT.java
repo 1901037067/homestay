@@ -537,6 +537,64 @@ class BookingFlowIT extends AbstractMysqlIT {
         assertThat(occupancyCount(room.getId())).as("自己的占用删掉后随事务回滚回来").isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("先加时到非整晚终点（15:00）再加一晚：必须拒，快照不能被兜底写成 1 晚")
+    void addNightAfterLateCheckoutIsRejected() {
+        Room room = plainRoom();
+        BookingVO b = bookingService.create(new CreateBookingReq(room.getId(), "加时后", null,
+                DAY.withHour(14), DAY.plusDays(2).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+        kernel.checkIn(b.id(), DAY.withHour(14));
+        // 加时只按超时收、不动 nights 快照，但区间已经不落在整晚终点上了。
+        // 此时再 +1 天会得到"次日 15:00"，fullDayNights 返回 0 ——
+        // 旧代码会让 PricingFrames 走"非整数晚兜底"，把快照写成 1 晚/1320 分钟
+        bookingService.extend(b.id(), new ExtendReq(DAY.plusDays(2).withHour(15)));
+
+        assertThatThrownBy(() -> bookingService.addNight(b.id()))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
+
+        assertThat(kernel.require(b.id()).getEndTime()).as("被拒之后离店时刻不能变")
+                .isEqualTo(DAY.plusDays(2).withHour(15));
+        assertThat(jdbc.queryForObject("select nights from booking where id = ?", Integer.class, b.id()))
+                .as("快照仍是 2 晚，不能被兜底改成 1 晚").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("加时正好 24 小时落回整晚终点，再加一晚应得到 3 晚")
+    void addNightAfterWholeDayExtensionGivesThreeNights() {
+        Room room = plainRoom();
+        BookingVO b = bookingService.create(new CreateBookingReq(room.getId(), "加时一天", null,
+                DAY.withHour(14), DAY.plusDays(1).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+        kernel.checkIn(b.id(), DAY.withHour(14));
+        bookingService.extend(b.id(), new ExtendReq(DAY.plusDays(2).withHour(12)));   // +24h，落回整晚终点
+
+        BookingVO after = bookingService.addNight(b.id());
+
+        assertThat(after.endTime()).isEqualTo(DAY.plusDays(3).withHour(12));
+        assertThat(after.nights()).as("1 晚 → 加时一晚 → 再加一晚 = 3 晚").isEqualTo(3);
+        assertThat(jdbc.queryForObject("select covered_minutes from booking where id = ?", Integer.class, b.id()))
+                .isEqualTo(1440 * 2 + 1320);
+    }
+
+    @Test
+    @DisplayName("已取消的单加晚：先判状态，别让冲突检测抢走错误码")
+    void addNightOnCancelledBookingReportsStateNotConflict() {
+        Room room = plainRoom();
+        BookingVO first = bookingService.create(new CreateBookingReq(room.getId(), "先订后取消", null,
+                DAY.withHour(14), DAY.plusDays(1).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+        bookingService.cancel(first.id());
+        // 此刻库里没有这张单的占用，但新单会占住同一区间 —— 旧实现会先去跑冲突检测
+        bookingService.create(new CreateBookingReq(room.getId(), "后订的", null,
+                DAY.withHour(14), DAY.plusDays(1).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+
+        assertThatThrownBy(() -> bookingService.addNight(first.id()))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .as("同一张已取消的单，有没有别人占着都该回同一个状态错，而不是 3003")
+                .isEqualTo(ErrorCode.BOOKING_ILLEGAL_STATE);
+    }
+
     // ------------------------------------------------------------ 列表筛选
 
     @Test

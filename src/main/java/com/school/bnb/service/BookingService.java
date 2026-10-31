@@ -162,7 +162,8 @@ public class BookingService {
     public BookingVO addNight(Long bookingId) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());
-        Booking after = kernel.addNight(bookingId, ctx.type().getCleanAfterMinutes());
+        Booking after = kernel.addNight(bookingId, ctx.type().getCleanAfterMinutes(),
+                ctx.type().getFullDayStart(), ctx.type().getFullDayEnd());
         // 与改期同一条：加一晚等于多买一晚，nights 与覆盖时长必须跟着重算。
         // 不加这一步，账单会按"三晚 + 24 小时超时"结算 —— 那正是加时路径的语义
         PricingFrames.Frames frames = PricingFrames.of(parseSaleType(b.getSaleType()), ctx.type(),

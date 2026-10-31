@@ -14,6 +14,7 @@ import com.school.bnb.vo.HoldCandidate;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
@@ -265,23 +266,49 @@ public class BookingKernel {
      * 在这儿重写一遍必然分叉。
      */
     @Transactional
-    public Booking addNight(Long bookingId, int cleanAfterMinutes) {
+    public Booking addNight(Long bookingId, int cleanAfterMinutes,
+                            LocalTime fullDayStart, LocalTime fullDayEnd) {
         Booking booking = require(bookingId);
-        roomMapper.selectForUpdate(booking.getRoomId());
+        Room room = roomMapper.selectForUpdate(booking.getRoomId());
         // 锁内重读：状态与 end 都要用最新值，方法开头那个 booking 是加锁前的快照
         Booking fresh = bookingMapper.findByIdForUpdate(bookingId);
         if (fresh == null) {
             throw new BizException(ErrorCode.BOOKING_NOT_FOUND, "订单不存在: " + bookingId);
         }
+        // 状态<b>先判</b>：状态不对就不该动占用。放在删占用之后判的话，错误码会被冲突检测抢走
+        // （同一张已取消的单，有别的占用时回 3003、没有时回 3002），API 调用方没法稳定处理
+        if (!Booking.CONFIRMED.equals(fresh.getStatus()) && !Booking.IN_USE.equals(fresh.getStatus())) {
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE,
+                    "订单当前 " + fresh.getStatus() + "，只有已确认或已入住的单能加晚");
+        }
         if (!SaleType.FULL_DAY.name().equals(fresh.getSaleType())) {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE, "只有全日房能按整晚续住；钟点房请走加时");
         }
-        int nights = fresh.getNights() == null ? 1 : fresh.getNights();
+        // 与入住同一道闸门：房间已维修/下架还给它续一晚，续完也住不进去
+        if (room != null && !Room.ON_SALE.equals(room.getStatus())) {
+            throw new BizException(ErrorCode.ROOM_NOT_ON_SALE,
+                    "房间 " + room.getRoomNo() + " 当前状态 " + room.getStatus() + "，不能续住");
+        }
+        // 晚数从<b>区间</b>推，不用快照：先加时（比如延到 15:00）之后快照还是旧的 N，
+        // 拿它当基准会把一张不落在整晚终点的单续成"另一张不落在整晚终点的单"
+        int nights = SellPolicy.fullDayNights(fresh.getStartTime(), fresh.getEndTime(),
+                fullDayStart, fullDayEnd);
+        if (nights == 0) {
+            throw new BizException(ErrorCode.INVALID_TIME_RANGE,
+                    "当前离店时刻 " + fresh.getEndTime() + " 不是整晚终点（模板 "
+                            + fullDayStart + " → " + fullDayEnd + "），没法按整晚续；"
+                            + "这张单加时过，要继续住请退房后重开一张");
+        }
         if (nights >= SellPolicy.MAX_FULL_DAY_NIGHTS) {
             throw new BizException(ErrorCode.INVALID_TIME_RANGE,
                     "一单最多 " + SellPolicy.MAX_FULL_DAY_NIGHTS + " 晚，再长请退房后重开");
         }
         LocalDateTime newEnd = fresh.getEndTime().plusDays(1);
+        // 超时很久的在住单：end 已经是过去，再 +1 天可能还是过去 —— 那样加完还是"全是超时费"
+        if (!newEnd.isAfter(LocalDateTime.now())) {
+            throw new BizException(ErrorCode.INVALID_TIME_RANGE,
+                    "这张单已超时，加一晚后离店仍是过去时刻（" + newEnd + "）；请先办退房再重开");
+        }
 
         Occupancy current = occupancyMapper.findRoomBlock(bookingId);
         LocalDateTime blockStart = current == null ? fresh.getStartTime() : current.getBlockStart();
@@ -298,7 +325,9 @@ public class BookingKernel {
         return require(bookingId);
     }
 
-    // --------------------------------------------------------- 状态流转    // 统一形状：锁房间行 → 条件更新（裁判）→ 需要时动 occupancy → 回读返回。
+    // --------------------------------------------------------- 状态流转
+
+    // 统一形状：锁房间行 → 条件更新（裁判）→ 需要时动 occupancy → 回读返回。
 
     @Transactional
     public Booking confirm(Long bookingId) {
