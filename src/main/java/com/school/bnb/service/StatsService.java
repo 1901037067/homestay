@@ -1,15 +1,22 @@
 package com.school.bnb.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
 import com.school.bnb.entity.Property;
 import com.school.bnb.mapper.StatsMapper;
 import com.school.bnb.stats.StatsAggregator;
+import com.school.bnb.vo.BillDetailLine;
 import com.school.bnb.vo.StatRow;
 import com.school.bnb.vo.StatsVO;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -19,6 +26,7 @@ import org.springframework.stereotype.Service;
  * <p>默认区间取最近 14 个营业日：演示数据就是按"最近一周"铺的（实施计划第 6 节），
  * 打开就有形状，不用先点日期。
  */
+@Slf4j
 @Service
 public class StatsService {
 
@@ -26,10 +34,12 @@ public class StatsService {
 
     private final StatsMapper statsMapper;
     private final PropertyService propertyService;
+    private final ObjectMapper json;
 
-    public StatsService(StatsMapper statsMapper, PropertyService propertyService) {
+    public StatsService(StatsMapper statsMapper, PropertyService propertyService, ObjectMapper json) {
         this.statsMapper = statsMapper;
         this.propertyService = propertyService;
+        this.json = json;
     }
 
     public StatsVO report(Long propertyId, LocalDate from, LocalDate to) {
@@ -49,6 +59,8 @@ public class StatsService {
         // 一个边界只准有一个权威，见 StatsMapper 类注释
         List<StatRow> rows = statsMapper.scanBookings(propertyId,
                 start.minusDays(1).atStartOfDay(), end.plusDays(2).atStartOfDay());
+        // 账单明细在这里解析，聚合器只吃结构化数据 —— 它要保持纯函数，不碰 JSON
+        rows.forEach(this::attachLines);
 
         StatsAggregator.Result r = StatsAggregator.aggregate(
                 new StatsAggregator.Input(start, end, p.getDayCutTime(), sellable, rows));
@@ -61,6 +73,34 @@ public class StatsService {
                 new StatsVO.Totals(r.totalRevenue(), r.totalPendingBookings(), r.totalSoldRoomDays(),
                         r.avgOccupancy(), bookings, overstay, earlyLeave),
                 r.daily(), r.heat(), r.ranking());
+    }
+
+    /**
+     * 把 {@code bill.detail_json} 解析成可分摊的明细。
+     *
+     * <p>坏 JSON 当成"没有明细"：报表读的是历史数据，库里可能有本系统之外写进去的行，
+     * 一条解析不了不该让整张报表 500。退回"整单归入住日"也仍然是原来的口径。
+     */
+    private void attachLines(StatRow r) {
+        if (r.getDetailJson() == null || r.getDetailJson().isBlank()) {
+            return;
+        }
+        try {
+            JsonNode arr = json.readTree(r.getDetailJson());
+            List<BillDetailLine> lines = new ArrayList<>(arr.size());
+            for (JsonNode n : arr) {
+                lines.add(new BillDetailLine(
+                        LocalDateTime.parse(n.path("from").asText()),
+                        LocalDateTime.parse(n.path("to").asText()),
+                        new BigDecimal(n.path("amount").asText())));
+            }
+            r.setLines(lines);
+        } catch (Exception e) {
+            log.warn("账单明细解析失败 booking={}，营收退回按入住日归属", r.getBookingId(), e);
+        } finally {
+            // 明细已经结构化了，原文没必要继续挂在行上
+            r.setDetailJson(null);
+        }
     }
 
     /**

@@ -18,6 +18,7 @@ import com.school.bnb.service.BookingService;
 import com.school.bnb.service.PropertyService;
 import com.school.bnb.service.RoomService;
 import com.school.bnb.service.RoomTypeService;
+import com.school.bnb.vo.BookingVO;
 import com.school.bnb.vo.PropertyVO;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -95,6 +96,29 @@ class StatsIT extends AbstractMysqlIT {
         assertThat(d.path("totals").path("avgOccupancy").asDouble()).isEqualTo(50.0);
         assertThat(d.path("daily").get(1).path("bookings").asInt()).as("取消单不计单数").isZero();
         assertThat(d.path("daily").get(1).path("soldRooms").asInt()).isZero();
+    }
+
+    @Test
+    @DisplayName("连住三晚的营收按账单明细摊到三个营业日（读真实账单快照，不是现算）")
+    void revenueSpreadsAcrossNightsFromRealBill() throws Exception {
+        LocalDateTime start = LocalDateTime.parse("2026-11-10T14:00");
+        LocalDateTime end = LocalDateTime.parse("2026-11-13T12:00");
+        BookingVO b = bookingService.create(new CreateBookingReq(roomA, "连住客人", null,
+                start, end, Booking.CONFIRMED, null, "FULL_DAY", null));
+        kernel.checkIn(b.id(), start);
+        kernel.checkOut(b.id(), end, 0);
+        billingService.settle(b.id());
+
+        JsonNode d = report("2026-11-10", "2026-11-12").path("data");
+        assertThat(d.path("daily")).hasSize(3);
+        for (int i = 0; i < 3; i++) {
+            assertThat(d.path("daily").get(i).path("revenue").decimalValue())
+                    .as("第 " + (i + 1) + " 晚的 100 元要落在那一营业日的账上")
+                    .isEqualByComparingTo("100.00");
+        }
+        assertThat(d.path("totals").path("revenue").decimalValue()).isEqualByComparingTo("300.00");
+        assertThat(d.path("totals").path("bookings").asInt())
+                .as("钱摊开了，但一张单仍只数一次").isEqualTo(1);
     }
 
     @Test

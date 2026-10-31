@@ -31,9 +31,13 @@ public interface StatsMapper {
             <script>
             select b.id as booking_id, b.room_id, r.property_id, r.room_no,
                    b.sale_type, b.status, b.start_time, b.end_time, b.actual_check_out, b.amount,
-                   coalesce(b.nights, 1) as nights
+                   coalesce(b.nights, 1) as nights,
+                   bl.detail_json
             from booking b
             join room r on r.id = b.room_id
+            <!-- 营收要按账单明细分摊，所以把已结算账单的 detail_json 一起取回来。
+                 用 left join：未结算的单没有账单行，它们本来也不算营收 -->
+            left join bill bl on bl.booking_id = b.id
             where b.start_time &lt; #{to}
               and b.end_time &gt; #{from}
             <if test="propertyId != null">

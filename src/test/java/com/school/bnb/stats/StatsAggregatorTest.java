@@ -3,6 +3,7 @@ package com.school.bnb.stats;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.school.bnb.vo.BillDetailLine;
 import com.school.bnb.vo.StatRow;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -132,6 +133,59 @@ class StatsAggregatorTest {
             assertThat(r.daily().get(0).bookings())
                     .as("但单数与营收仍归入住那天，不能顺着房晚混进来").isZero();
             assertThat(r.totalRevenue()).isEqualByComparingTo("0.00");
+        }
+
+        @Test
+        @DisplayName("营收按账单明细的起点摊到各营业日：连住三晚的钱分别落在三天账上")
+        void revenueSpreadsByBillLines() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-10T14:00", "2026-11-13T12:00", null, "1164.00");
+            stay.setNights(3);
+            stay.setLines(List.of(
+                    line("2026-11-10T14:00", "2026-11-11T12:00", "388.00"),
+                    line("2026-11-11T14:00", "2026-11-12T12:00", "388.00"),
+                    line("2026-11-12T14:00", "2026-11-13T12:00", "388.00")));
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D2, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.daily().get(0).revenue()).isEqualByComparingTo("388.00");
+            assertThat(r.daily().get(1).revenue()).as("第二晚的钱落在第二个营业日").isEqualByComparingTo("388.00");
+            assertThat(r.totalRevenue())
+                    .as("窗口内只有两晚，第三晚在窗口外，不该算进这段总计").isEqualByComparingTo("776.00");
+        }
+
+        @Test
+        @DisplayName("没有账单明细时退回整单归入住日 —— 与引入分摊之前完全一致")
+        void revenueWithoutLinesFallsBackToCheckInDay() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-10T14:00", "2026-11-13T12:00", null, "1164.00");
+            stay.setNights(3);
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D2, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.daily().get(0).revenue()).isEqualByComparingTo("1164.00");
+            assertThat(r.daily().get(1).revenue()).isZero();
+        }
+
+        @Test
+        @DisplayName("入住日落在区间外的连住单，区间内那几晚的营收仍要计进来")
+        void revenueSurvivesTheRangeFilterThatProtectsOrderCounts() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-09T14:00", "2026-11-12T12:00", null, "1164.00");
+            stay.setNights(3);
+            stay.setLines(List.of(
+                    line("2026-11-09T14:00", "2026-11-10T12:00", "388.00"),
+                    line("2026-11-10T14:00", "2026-11-11T12:00", "388.00"),
+                    line("2026-11-11T14:00", "2026-11-12T12:00", "388.00")));
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D2, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.daily().get(0).revenue()).as("11-10 那晚的钱").isEqualByComparingTo("388.00");
+            assertThat(r.daily().get(0).bookings()).as("订单数仍只归入住那天").isZero();
+            assertThat(r.totalRevenue()).isEqualByComparingTo("776.00");
         }
 
         @Test
@@ -322,5 +376,10 @@ class StatsAggregatorTest {
         r.setActualCheckOut(actualOut == null ? null : LocalDateTime.parse(actualOut));
         r.setAmount(new BigDecimal(amount));
         return r;
+    }
+
+    /** 一条账单明细。真实数据里这些行由 service 从 bill.detail_json 解析出来。 */
+    private static BillDetailLine line(String from, String to, String amount) {
+        return new BillDetailLine(LocalDateTime.parse(from), LocalDateTime.parse(to), new BigDecimal(amount));
     }
 }

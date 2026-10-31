@@ -1,5 +1,6 @@
 package com.school.bnb.stats;
 
+import com.school.bnb.vo.BillDetailLine;
 import com.school.bnb.vo.StatRow;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -110,6 +111,9 @@ public final class StatsAggregator {
             // 连住单，它落在区间内的那几个晚上确实是卖出去的房。第一版把房晚跟着营收一起
             // 放在 continue 之后，"只查今天"就会把长住的今天整个漏掉
             spreadRoomNights(r, acc, cutHour, cutMinute);
+            // 营收也摊到明细各自的营业日，同样要在 continue 之前：一张入住日落在区间外的
+            // 连住单，它落在区间内的那几晚的钱也该算进这段窗口
+            spreadRevenue(r, acc, cutHour, cutMinute);
 
             LocalDate bd = businessDay(r.getStartTime(), cutHour, cutMinute);
             DailyAcc d = acc.get(bd);
@@ -121,9 +125,7 @@ public final class StatsAggregator {
                 continue;
             }
             d.bookings++;
-            if (SETTLED.equals(r.getStatus())) {
-                d.revenue = d.revenue.add(money(r.getAmount()));
-            } else if (CHECKED_OUT.equals(r.getStatus())) {
+            if (CHECKED_OUT.equals(r.getStatus())) {
                 // 只数单数，不累金额：正常流程里 amount 在结算那一刻才写回，
                 // 退房后一直是 0。之前按"累加 amount"统计，于是真实的待结算永远是 0 元，
                 // 只有测试里手写金额的那行才显得对 —— 那是测试在骗自己
@@ -191,6 +193,36 @@ public final class StatsAggregator {
             DailyAcc d = acc.get(businessDay(r.getStartTime().plusDays(i), cutHour, cutMinute));
             if (d != null) {
                 d.soldRooms.add(r.getRoomId());
+            }
+        }
+    }
+
+    /**
+     * 把已结算金额摊到<b>每条账单明细各自起点</b>所在的营业日。
+     *
+     * <p>为什么要摊：连住三晚的单只把整笔钱记在入住那天，跨月时十月会虚高、十一月是零。
+     * 摊开之后，"这个营业日挣了多少钱"才和"这个营业日卖了几间房"对得上 ——
+     * 房晚本来就是按每晚摊的，营收不摊就是两张互相解释不通的表。
+     *
+     * <p>没有明细（历史数据 / 账单行缺失 / JSON 解析失败）就<b>整单归入住日</b>：
+     * 与引入分摊之前完全一致。宁可口径退回旧的，也不能因为缺一条明细把营收丢掉。
+     */
+    private static void spreadRevenue(StatRow r, Map<LocalDate, DailyAcc> acc,
+                                      int cutHour, int cutMinute) {
+        if (!SETTLED.equals(r.getStatus())) {
+            return;
+        }
+        if (r.getLines() == null || r.getLines().isEmpty()) {
+            DailyAcc d = acc.get(businessDay(r.getStartTime(), cutHour, cutMinute));
+            if (d != null) {
+                d.revenue = d.revenue.add(money(r.getAmount()));
+            }
+            return;
+        }
+        for (BillDetailLine line : r.getLines()) {
+            DailyAcc d = acc.get(businessDay(line.from(), cutHour, cutMinute));
+            if (d != null) {
+                d.revenue = d.revenue.add(money(line.amount()));
             }
         }
     }

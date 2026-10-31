@@ -2,6 +2,7 @@ package com.school.bnb.vo;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.Data;
 
 /**
@@ -39,4 +40,18 @@ public class StatRow {
 
     /** 已结算金额；未结算为 0（下单时写 0，结算时由计费引擎写回）。 */
     private BigDecimal amount;
+
+    /**
+     * 已结算账单的明细原文（{@code bill.detail_json}）。由 service 解析成 {@link #lines}。
+     * 只在这里停留一下 —— 聚合器不碰 JSON。
+     */
+    private String detailJson;
+
+    /**
+     * 已结算账单的明细，用来把营收摊到"钱是哪个晚上挣的"。
+     *
+     * <p>由 service 从 {@link #detailJson} 解析后塞进来 —— 聚合器保持纯函数，不碰 JSON。
+     * 为空（历史数据 / 没账单行）时退回"整单归入住日"，与引入分摊之前一致。
+     */
+    private List<BillDetailLine> lines;
 }
