@@ -203,9 +203,7 @@
           value-format="YYYY-MM-DDTHH:mm:ss"
           placeholder="结束"
         />
-        <p class="edit-hint bnb-muted">
-          {{ editing === 'extend' ? '加时只能往后推，且需重跑冲突检测' : '改期会删旧占用行后重新校验' }}
-        </p>
+        <p class="edit-hint bnb-muted">{{ editHint }}</p>
         <p v-if="editError" class="edit-err">{{ editError }}</p>
       </div>
 
@@ -377,10 +375,13 @@ const previewEnd = computed(() => {
     const [h, m] = form.room.fullDayStart.split(':').map(Number)
     const start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m)
     const [eh, em] = form.room.fullDayEnd.split(':').map(Number)
-    // 连住 N 晚 = 起点日 + N 天的那个模板结束时刻。与后端 SellPolicy.fullDayNights 同一几何：
-    // 相邻两晚起点恒差 24 小时，中间 12:00–14:00 的空档算客人留着房，整段是一条连续占用
+    // 只有结束时刻不晚于开始时刻才叫"跨午夜"（14:00 → 次日 12:00）。
+    // 判据必须和后端 SellPolicy.fullDayRange 一模一样：那边是 end.isAfter(start) ? 当天 : 次日。
+    // 同日模板（08:00 → 20:00）若一律 +nights，N=1 会被算成 25 小时、N=3 多出一整天
+    const crossesMidnight = !(eh > h || (eh === h && em > m))
     const nights = Math.max(1, form.nights || 1)
-    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + nights, eh, em)
+    const dayOffset = crossesMidnight ? nights : nights - 1
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + dayOffset, eh, em)
     return { start, end }
   }
   // 开始时间理论上不可清空（选择器关掉了 clearable），但这里仍然兜一层：
@@ -405,14 +406,20 @@ const previewText = computed(() => {
 })
 
 /**
- * 结束那一头的提示。写死"次日结束"在连住多于两晚时就是假话 ——
- * 三晚是隔两天才走，前台照这句话排保洁就排错了。多晚直接给出住到哪天。
+ * 结束那一头的提示。按<b>真实日差</b>算而不是按晚数猜：同日模板住一晚是"当天结束"，
+ * 跨午夜模板住三晚是"住到 11-02"。写死"次日结束"在两种情况下都是假话。
  */
 const endHint = computed(() => {
   const p = previewEnd.value
   if (!p || form.mode !== 'fullday') return ''
-  const nights = Math.max(1, form.nights || 1)
-  return nights === 1 ? '（次日结束）' : `（住到 ${fmt(p.end).slice(5, 10)}）`
+  const s = p.start
+  const e = p.end
+  const days = Math.round(
+    (new Date(e.getFullYear(), e.getMonth(), e.getDate()).getTime()
+      - new Date(s.getFullYear(), s.getMonth(), s.getDate()).getTime()) / 86400000)
+  if (days <= 0) return '（当天结束）'
+  if (days === 1) return '（次日结束）'
+  return `（住到 ${fmt(e).slice(5, 10)}）`
 })
 
 const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
@@ -420,6 +427,18 @@ const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
 function setMode(mode) {
   form.mode = mode
 }
+
+/**
+ * 加时的话术要按售卖方式分开说。全日房"往后加 24 小时"收的是<b>超时单价</b>，
+ * 不是多买一晚 —— 按演示房型算 24×40=960，比正常一晚 388 贵得多。
+ * 前台若以为"加一天就是加一晚"，这张账单在柜台上是解释不清的，所以把话摆在弹窗里。
+ */
+const editHint = computed(() => {
+  if (editing.value !== 'extend') return '改期会删旧占用行后重新校验'
+  return detail.value?.saleType === 'FULL_DAY'
+    ? '加时只能往后推、需重跑冲突检测。全日房加时按超时单价收，不是多买一晚——要多住整晚请走改期或重开一张'
+    : '加时只能往后推，且需重跑冲突检测'
+})
 
 function onCellClick(room, offset) {
   if (room.status !== 'ON_SALE') {

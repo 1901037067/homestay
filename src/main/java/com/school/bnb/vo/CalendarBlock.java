@@ -16,6 +16,8 @@ public class CalendarBlock {
     private String bookingNo;
     private String guestName;
     private String bookingStatus;
+    /** 售卖方式。加时的提示要按它分话术，而"从时长推断是不是全日房"正是本项目明令禁止的那种猜法。 */
+    private String saleType;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private LocalDateTime blockStart;

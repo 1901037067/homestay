@@ -34,7 +34,7 @@
           <el-table-column label="单价" width="110" align="right">
             <template #default="{ row }">
               <span class="bnb-num">¥{{ money(row.unitPrice) }}</span>
-              <span class="bnb-muted unit-hint">{{ row.unitHint === '打包' ? '' : '/h' }}</span>
+              <span class="bnb-muted unit-hint">{{ unitSuffix(row.unitHint) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="规则" min-width="110">
@@ -90,6 +90,18 @@ const settling = ref(false)
 const bookingId = ref(null)
 
 const money = (v) => (v === null || typeof v === 'undefined' ? '—' : Number(v).toFixed(2))
+
+/**
+ * 后端给的是完整的量纲（"打包" / "元/晚" / "元/小时"），这里只把它压成后缀。
+ *
+ * 原来这一列写死 `/h`：连住一晚一行的账单会显示成"¥388 /h"，客人第一眼就以为
+ * 388 是小时价 —— 而这一列存在的唯一理由就是防止把打包价误读成小时价。
+ * 兜底分支保留 hint 原文，后端将来加新量纲也不会静默退回 `/h`。
+ */
+function unitSuffix(hint) {
+  if (!hint || hint === '打包') return ''
+  return hint.startsWith('元/') ? `/${hint.slice(2)}` : `/${hint}`
+}
 const fmtLocal = (s) => (s ? `${s.slice(5, 10)} ${s.slice(11, 16)}` : '—')
 
 // 连着点两张单时，前一张的响应可能后到：用序号把它丢掉，

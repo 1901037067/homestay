@@ -95,6 +95,46 @@ class StatsAggregatorTest {
         }
 
         @Test
+        @DisplayName("连住三晚：每个营业日各记一次房晚，但单数与营收只算入住那天")
+        void multiNightSpreadsRoomNightsButNotRevenue() {
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-10T14:00", "2026-11-13T12:00", null, "1164.00");
+            stay.setNights(3);
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D2, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.daily().get(0).soldRooms()).as("11-10 那晚").isEqualTo(1);
+            assertThat(r.daily().get(1).soldRooms()).as("11-11 那晚这间房同样是卖出去的").isEqualTo(1);
+            assertThat(r.totalSoldRoomDays()).as("区间内两晚 = 2 个房晚，不是 1").isEqualTo(2);
+
+            assertThat(r.daily().get(0).bookings()).isEqualTo(1);
+            assertThat(r.daily().get(1).bookings()).as("一张单只数一次，不能跟着房晚翻倍").isZero();
+            assertThat(r.daily().get(1).revenue()).isEqualByComparingTo("0.00");
+            assertThat(r.totalRevenue()).isEqualByComparingTo("1164.00");
+        }
+
+        @Test
+        @DisplayName("入住日落在区间外的连住单，区间内的每一晚仍要计房晚")
+        void roomNightsSurviveTheRangeFilterThatProtectsRevenue() {
+            // 11-09 入住连住三晚，晚上分别落在 11-09 / 11-10 / 11-11；查询窗口只有后两天。
+            // 房晚的撒点必须排在"入住日不在区间就 continue"之前 —— 否则"只查今天"
+            // 会把今天实际被占住的房间整个漏掉，和热力图当初那个 bug 同一个形状
+            StatRow stay = row(1L, 1L, "201", "SETTLED",
+                    "2026-11-09T14:00", "2026-11-12T12:00", null, "1164.00");
+            stay.setNights(3);
+
+            var r = StatsAggregator.aggregate(new StatsAggregator.Input(
+                    D1, D2, CUT_0600, 10, List.of(stay)));
+
+            assertThat(r.daily().get(0).soldRooms())
+                    .as("11-10 这一晚这间房确实被卖出去了").isEqualTo(1);
+            assertThat(r.daily().get(0).bookings())
+                    .as("但单数与营收仍归入住那天，不能顺着房晚混进来").isZero();
+            assertThat(r.totalRevenue()).isEqualByComparingTo("0.00");
+        }
+
+        @Test
         @DisplayName("凌晨的单归前一个营业日，热力格落在旋转后的尾部而不是开头")
         void smallHourBookingLandsAtTheTailOfTheAxis() {
             // 11-11 02:00–05:00 → 属于 11-10 这个营业日，横轴第 20、21、22 格

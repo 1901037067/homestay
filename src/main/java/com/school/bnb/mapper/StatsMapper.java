@@ -30,7 +30,8 @@ public interface StatsMapper {
     @Select("""
             <script>
             select b.id as booking_id, b.room_id, r.property_id, r.room_no,
-                   b.sale_type, b.status, b.start_time, b.end_time, b.actual_check_out, b.amount
+                   b.sale_type, b.status, b.start_time, b.end_time, b.actual_check_out, b.amount,
+                   coalesce(b.nights, 1) as nights
             from booking b
             join room r on r.id = b.room_id
             where b.start_time &lt; #{to}

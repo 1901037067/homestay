@@ -22,6 +22,9 @@ public final class SellPolicy {
     /** 相邻两晚模板起点的间隔。全链路 naive 本地时间、无夏令时，所以恒等于 24 小时。 */
     private static final int DAY_MINUTES = 24 * 60;
 
+    /** 一次登记的连住上限。前端也限到 60，但 API 是公开面，不能只靠前端拦。 */
+    private static final int MAX_FULL_DAY_NIGHTS = 365;
+
     /** 一次判定需要的全部输入，由调用方从房间/房型/民宿三张表取出后传进来。 */
     public record Rule(
             String roomStatus,
@@ -115,10 +118,18 @@ public final class SellPolicy {
      * 以及防止前端把全日房改成任意时段来绕开定价。
      */
     private static Verdict fullDayCheck(Rule r, LocalDateTime start, LocalDateTime end) {
-        if (fullDayNights(start, end, r.fullDayStart(), r.fullDayEnd()) == 0) {
+        int nights = fullDayNights(start, end, r.fullDayStart(), r.fullDayEnd());
+        if (nights == 0) {
             return fail(ErrorCode.INVALID_TIME_RANGE,
                     "全日房只能整晚连住：从 " + r.fullDayStart() + " 起、到某天 " + r.fullDayEnd()
                             + " 止（订 N 晚就选 N 个整晚），收到 " + start + " → " + end);
+        }
+        // 上限只加在校验这一侧，不加进 fullDayNights —— 那个方法还被计费调用，
+        // 让它对一张已存在的长单返回 0，等于把这张单的晚数静默改成 1
+        if (nights > MAX_FULL_DAY_NIGHTS) {
+            return fail(ErrorCode.INVALID_TIME_RANGE,
+                    "一次最多连住 " + MAX_FULL_DAY_NIGHTS + " 晚，这一单要住 " + nights
+                            + " 晚；再长请拆成几张单，中途改价与结算都更好处理");
         }
         return Verdict.OK;
     }

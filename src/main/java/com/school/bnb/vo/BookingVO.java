@@ -18,6 +18,8 @@ public record BookingVO(
         String guestPhone,
         LocalDateTime startTime,
         LocalDateTime endTime,
+        /** 连住晚数。历史行没有这一列（V9 之前），一律按 1 晚报出——列表不该出现"不知道几晚"。 */
+        Integer nights,
         String status,
         LocalDateTime holdExpireAt,
         LocalDateTime actualCheckIn,
@@ -29,6 +31,7 @@ public record BookingVO(
         return new BookingVO(b.getId(), b.getBookingNo(), b.getRequestId(), b.getSaleType(),
                 b.getRoomId(), roomNo, propertyId, propertyName,
                 roomTypeName, b.getGuestName(), b.getGuestPhone(), b.getStartTime(), b.getEndTime(),
+                b.getNights() == null ? 1 : b.getNights(),
                 b.getStatus(), b.getHoldExpireAt(), b.getActualCheckIn(), b.getActualCheckOut(),
                 b.getAmount(), b.getCreatedAt());
     }

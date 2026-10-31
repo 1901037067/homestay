@@ -106,16 +106,20 @@ public final class StatsAggregator {
             // 第一版把"入住营业日不在区间内"的整笔订单直接跳过了，于是"只查今天"时
             // 热力图里这六格凭空消失 —— 热力图随查询范围变形，这在论文里是硬伤。
             spreadHours(r, in, heatRooms);
+            // 房晚也必须排在 continue 之前 —— 和热度同一个形状：一张入住日落在区间外的
+            // 连住单，它落在区间内的那几个晚上确实是卖出去的房。第一版把房晚跟着营收一起
+            // 放在 continue 之后，"只查今天"就会把长住的今天整个漏掉
+            spreadRoomNights(r, acc, cutHour, cutMinute);
 
             LocalDate bd = businessDay(r.getStartTime(), cutHour, cutMinute);
             DailyAcc d = acc.get(bd);
-            // 房晚、营收、单数、超时/早退、排行都只认"入住营业日"落在区间内的单。
+            // 营收、单数、超时/早退、排行只认"入住营业日"落在区间内的单：钱是在那天收的，
+            // 一张单也只该数一次。<b>房晚与营收归属不同日</b>，界面上必须写清这一点。
             // 注意这里是 continue：不能只跳过日序列那一部分，否则区间外的单会混进排行，
             // 指标卡与排行互相打脸
             if (d == null) {
                 continue;
             }
-            d.soldRooms.add(r.getRoomId());
             d.bookings++;
             if (SETTLED.equals(r.getStatus())) {
                 d.revenue = d.revenue.add(money(r.getAmount()));
@@ -169,6 +173,27 @@ public final class StatsAggregator {
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /**
+     * 把一间房记到它<b>住着的每一个营业日</b>上。
+     *
+     * <p>钟点房与单晚全日房只有一晚，等价于"算入住那天"。连住 N 晚的单，相邻两晚的起点
+     * 恒差 24 小时（全链路 naive 本地时间），所以第 i 晚的锚点是 {@code start + i 天}。
+     *
+     * <p>为什么必须这么算：出租率的口径是"今天有几间房被卖出去过"。一张连住三晚的单
+     * 只往入住那天记一次，等于把三个晚上实际被占住的房间报成一晚 —— 那个指标就不再
+     * 叫售出房间数了。引入连住之前两者恰好等价，所以这个偏差一直没暴露。
+     */
+    private static void spreadRoomNights(StatRow r, Map<LocalDate, DailyAcc> acc,
+                                         int cutHour, int cutMinute) {
+        int nights = r.getNights() == null || r.getNights() < 1 ? 1 : r.getNights();
+        for (int i = 0; i < nights; i++) {
+            DailyAcc d = acc.get(businessDay(r.getStartTime().plusDays(i), cutHour, cutMinute));
+            if (d != null) {
+                d.soldRooms.add(r.getRoomId());
+            }
+        }
+    }
 
     /** 把一单按小时切片撒进热力格；跨零点会自然落进两个营业日。 */
     private static void spreadHours(StatRow r, Input in, Map<String, Set<Long>> heat) {

@@ -126,7 +126,7 @@ public interface OccupancyMapper extends BaseMapper<Occupancy> {
     @Select("""
             <script>
             select o.room_id, o.booking_id, b.booking_no, b.guest_name, b.status as booking_status,
-                   o.start_time, o.end_time, o.block_start, o.block_end, o.kind
+                   b.sale_type, o.start_time, o.end_time, o.block_start, o.block_end, o.kind
             from occupancy o
             join booking b on b.id = o.booking_id
             where ((o.block_start &lt; #{to}

@@ -29,6 +29,14 @@ public class StatRow {
     private LocalDateTime endTime;
     private LocalDateTime actualCheckOut;
 
+    /**
+     * 连住晚数，决定这一单要给几个营业日各记一次房晚。
+     *
+     * <p>SQL 里已经 {@code coalesce(b.nights, 1)}，所以正常不会是 null；这里仍按
+     * "缺失当 1 晚"处理 —— 少算房晚比多算更难被发现，宁可让兜底是保守的那一侧。
+     */
+    private Integer nights;
+
     /** 已结算金额；未结算为 0（下单时写 0，结算时由计费引擎写回）。 */
     private BigDecimal amount;
 }

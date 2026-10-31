@@ -98,6 +98,27 @@ class StatsIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("连住三晚在真实数据上是三个房晚：三个营业日各出现一次售出房间")
+    void reportCountsOneRoomNightPerStayedDay() throws Exception {
+        // 走 SQL 而不只是纯函数：StatsMapper 若漏了 coalesce(b.nights, 1)，聚合器拿到的
+        // nights 会是 null、按 1 晚兜底，报表就静默少算两个房晚 —— 这种错只有在真库上才暴露
+        insertStay(roomA, "2026-11-10T14:00", "2026-11-13T12:00", 3, 1164);
+
+        JsonNode d = report("2026-11-10", "2026-11-12").path("data");
+        assertThat(d.path("daily")).hasSize(3);
+        for (int i = 0; i < 3; i++) {
+            assertThat(d.path("daily").get(i).path("soldRooms").asInt())
+                    .as("第 " + (i + 1) + " 晚也要算成当天卖出去的一间房").isEqualTo(1);
+        }
+        assertThat(d.path("daily").get(0).path("bookings").asInt())
+                .as("单数仍然只在入住那天计一次").isEqualTo(1);
+        assertThat(d.path("daily").get(1).path("bookings").asInt()).isZero();
+        // 分母 2 间房 × 3 天 = 6 个房晚，卖出 3 个 → 50%
+        assertThat(d.path("totals").path("soldRoomDays").asInt()).isEqualTo(3);
+        assertThat(d.path("totals").path("avgOccupancy").asDouble()).isEqualTo(50.0);
+    }
+
+    @Test
     @DisplayName("营业日切割落在 SQL 出数上：05:00 的单属于前一天，只查后一天时不能出现")
     void businessDayCutAppliesToQueriedRange() throws Exception {
         insert(roomA, "SETTLED", "2026-11-11T05:00", "2026-11-11T08:00", "2026-11-11T08:00", 120);
@@ -236,6 +257,16 @@ class StatsIT extends AbstractMysqlIT {
                 values (?, 'HOURLY', ?, '报表客人', ?, ?, ?, ?, ?)
                 """, "S" + System.nanoTime(), roomId, start, end, actualOut, status,
                 new BigDecimal(amount));
+    }
+
+    /** 连住 N 晚的一单。nights 正常由下单时的快照写入，这里摆成同样的形状。 */
+    private void insertStay(Long roomId, String start, String end, int nights, int amount) {
+        jdbc.update("""
+                insert into booking (booking_no, sale_type, room_id, guest_name, start_time, end_time,
+                                     status, amount, nights)
+                values (?, 'FULL_DAY', ?, '连住客人', ?, ?, 'SETTLED', ?, ?)
+                """, "S" + System.nanoTime(), roomId, start, end,
+                new BigDecimal(amount), nights);
     }
 
     private JsonNode report(String from, String to) throws Exception {

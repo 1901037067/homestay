@@ -453,6 +453,13 @@ class BookingFlowIT extends AbstractMysqlIT {
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).getCode())
                 .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
+
+        // 晚数上限：前端限到 60，但 API 是公开面，手滑开一张一年多的单得由后端挡
+        assertThatThrownBy(() -> bookingService.create(new CreateBookingReq(room.getId(), "超长客", null,
+                DAY.withHour(14), DAY.plusDays(400).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.INVALID_TIME_RANGE);
     }
 
     @Test

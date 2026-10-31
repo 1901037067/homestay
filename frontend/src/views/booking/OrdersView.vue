@@ -51,9 +51,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="guestName" label="客人" min-width="90" />
-        <el-table-column label="售卖" width="60">
+        <el-table-column label="售卖" width="104">
           <template #default="{ row }">
             <span class="bnb-muted">{{ row.saleType === 'FULL_DAY' ? '全日' : '钟点' }}</span>
+            <!-- 三晚和一晚原来只能靠结束时间分辨；晚数直接标在列里 -->
+            <span v-if="row.nights > 1" class="bnb-num"> · {{ row.nights }} 晚</span>
           </template>
         </el-table-column>
         <el-table-column label="业务时段" min-width="180">
