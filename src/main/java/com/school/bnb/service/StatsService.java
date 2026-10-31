@@ -76,7 +76,9 @@ public class StatsService {
 
     static String toCsv(StatsVO vo) {
         StringBuilder sb = new StringBuilder("\uFEFF");   // BOM：少了它 Excel 会按 GBK 读，中文全乱
-        sb.append("营业日,可售房间,售出房间,出租率%,已结算营收,待结算单数,订单数,超时未退房,提前退房\n");
+        // 这一列装的是<b>房晚</b>（连住 N 晚会记 N 次），不是"当天新增的单数"。
+        // 表头写"售出房间"会让人按单数去读，一行三晚的单会显得对不上
+        sb.append("营业日,可售房间,售出房晚,出租率%,已结算营收,待结算单数,订单数,超时未退房,提前退房\n");
         for (StatsAggregator.Daily d : vo.daily()) {
             sb.append(d.businessDay()).append(',')
                     .append(d.sellableRooms()).append(',')

@@ -249,8 +249,56 @@ public class BookingKernel {
         return require(bookingId);
     }
 
-    // --------------------------------------------------------- 状态流转
-    // 统一形状：锁房间行 → 条件更新（裁判）→ 需要时动 occupancy → 回读返回。
+    /**
+     * 加一晚：全日房整晚续住，把 end 往后推一天。
+     *
+     * <p><b>为什么不复用加时</b>：加时收的是"偏离模板终点那段时间"的超时费，用它续住会算成
+     * "三晚房费 + 24 小时超时费" —— 按演示房型是 960 元，而正常一晚 388。客人说"再住一晚"，
+     * 前台要的是多买一晚，不是多付 24 小时超时。
+     *
+     * <p><b>为什么不复用改期</b>：改期只在未入住时可用（{@code rescheduleIfOpen}），
+     * 而加一晚最常见的场景恰恰是客人已经住进去了。
+     *
+     * <p>占用沿用"删自己 → 当前读检测 → 重写"，起点用占用行现在的 block_start ——
+     * 提前入住会把起点前扩，拿计划起点重写会把那段抹平（与 {@link #extend} 同一条理由）。
+     * {@code nights} 与计费快照由 service 侧重写：那是"按区间重算覆盖时长"的一整套纯函数，
+     * 在这儿重写一遍必然分叉。
+     */
+    @Transactional
+    public Booking addNight(Long bookingId, int cleanAfterMinutes) {
+        Booking booking = require(bookingId);
+        roomMapper.selectForUpdate(booking.getRoomId());
+        // 锁内重读：状态与 end 都要用最新值，方法开头那个 booking 是加锁前的快照
+        Booking fresh = bookingMapper.findByIdForUpdate(bookingId);
+        if (fresh == null) {
+            throw new BizException(ErrorCode.BOOKING_NOT_FOUND, "订单不存在: " + bookingId);
+        }
+        if (!SaleType.FULL_DAY.name().equals(fresh.getSaleType())) {
+            throw new BizException(ErrorCode.INVALID_TIME_RANGE, "只有全日房能按整晚续住；钟点房请走加时");
+        }
+        int nights = fresh.getNights() == null ? 1 : fresh.getNights();
+        if (nights >= SellPolicy.MAX_FULL_DAY_NIGHTS) {
+            throw new BizException(ErrorCode.INVALID_TIME_RANGE,
+                    "一单最多 " + SellPolicy.MAX_FULL_DAY_NIGHTS + " 晚，再长请退房后重开");
+        }
+        LocalDateTime newEnd = fresh.getEndTime().plusDays(1);
+
+        Occupancy current = occupancyMapper.findRoomBlock(bookingId);
+        LocalDateTime blockStart = current == null ? fresh.getStartTime() : current.getBlockStart();
+        occupancyMapper.deleteByBookingId(bookingId);
+        LocalDateTime blockEnd = newEnd.plusMinutes(cleanAfterMinutes);
+        requireNoConflict(fresh.getRoomId(), blockStart, blockEnd);
+
+        // 状态与 expectedEnd 一起进 where：并发加晚时后一个不能覆盖前一个
+        if (bookingMapper.addNightIfOpen(bookingId, newEnd, fresh.getEndTime()) == 0) {
+            throw new BizException(ErrorCode.BOOKING_ILLEGAL_STATE, "订单状态或时段已变化，请刷新后重试");
+        }
+        writeOccupancy(bookingId, fresh.getRoomId(), fresh.getStartTime(), newEnd, blockStart, blockEnd);
+        log.info("加一晚 booking={} → 至 {}", booking.getBookingNo(), newEnd);
+        return require(bookingId);
+    }
+
+    // --------------------------------------------------------- 状态流转    // 统一形状：锁房间行 → 条件更新（裁判）→ 需要时动 occupancy → 回读返回。
 
     @Transactional
     public Booking confirm(Long bookingId) {

@@ -495,6 +495,48 @@ class BookingFlowIT extends AbstractMysqlIT {
                 .isEqualTo(1320);
     }
 
+    @Test
+    @DisplayName("加一晚：在住的单也能续，nights 与覆盖时长跟着长，占用仍是一条")
+    void addNightWorksForInUseStay() {
+        Room room = plainRoom();
+        BookingVO b = bookingService.create(new CreateBookingReq(room.getId(), "续住客", null,
+                DAY.withHour(14), DAY.plusDays(2).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+        // 先入住 —— 这个状态正是"改期走不了"的那个（改期只收未入住）
+        kernel.checkIn(b.id(), DAY.withHour(14));
+
+        BookingVO after = bookingService.addNight(b.id());
+
+        assertThat(after.endTime()).as("离店延后一天").isEqualTo(DAY.plusDays(3).withHour(12));
+        assertThat(after.nights()).as("2 晚 → 3 晚").isEqualTo(3);
+        assertThat(jdbc.queryForObject("select covered_minutes from booking where id = ?", Integer.class, b.id()))
+                .as("覆盖时长要多出一整晚的 24 小时").isEqualTo(1440 * 2 + 1320);
+        assertThat(occupancyCount(room.getId())).as("仍是一条连续占用，不是两行").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("加一晚撞上后面的单要拒，占用与快照都不能变")
+    void addNightRejectsConflictAndRollsBack() {
+        Room room = plainRoom();
+        BookingVO a = bookingService.create(new CreateBookingReq(room.getId(), "原住客", null,
+                DAY.withHour(14), DAY.plusDays(2).withHour(12), Booking.CONFIRMED, null, "FULL_DAY", null));
+        // 后面已经卖出去的时段：加一晚会把 a 顶到这段上
+        bookingService.create(new CreateBookingReq(room.getId(), "后来的", null,
+                DAY.plusDays(3).withHour(11), DAY.plusDays(3).withHour(18), Booking.CONFIRMED, null,
+                "HOURLY", null));
+        kernel.checkIn(a.id(), DAY.withHour(14));
+
+        assertThatThrownBy(() -> bookingService.addNight(a.id()))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getCode())
+                .isEqualTo(ErrorCode.ROOM_TIME_CONFLICT);
+
+        assertThat(kernel.require(a.id()).getEndTime()).as("被拒之后离店时刻不能变")
+                .isEqualTo(DAY.plusDays(2).withHour(12));
+        assertThat(jdbc.queryForObject("select nights from booking where id = ?", Integer.class, a.id()))
+                .isEqualTo(2);
+        assertThat(occupancyCount(room.getId())).as("自己的占用删掉后随事务回滚回来").isEqualTo(2);
+    }
+
     // ------------------------------------------------------------ 列表筛选
 
     @Test

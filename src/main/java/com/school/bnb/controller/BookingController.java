@@ -98,6 +98,13 @@ public class BookingController {
         return R.ok(service.extend(id, req));
     }
 
+    @Operation(summary = "加一晚：全日房整晚续住",
+            description = "按多买一晚计费（该晚自己的价），不是按超时单价收 24 小时的超时费。未退房即可加。")
+    @PostMapping("/bookings/{id}/add-night")
+    public R<BookingVO> addNight(@PathVariable Long id) {
+        return R.ok(service.addNight(id));
+    }
+
     @Operation(summary = "清扫完成", description = "保洁收拾好后点这一下，房间才真正恢复可售")
     @PostMapping("/rooms/{id}/cleaning-done")
     public R<Integer> finishCleaning(@PathVariable("id") Long roomId) {

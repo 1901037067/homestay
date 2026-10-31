@@ -159,6 +159,26 @@ public class BookingService {
     }
 
     @Transactional
+    public BookingVO addNight(Long bookingId) {
+        Booking b = kernel.require(bookingId);
+        Ctx ctx = ctx(b.getRoomId());
+        Booking after = kernel.addNight(bookingId, ctx.type().getCleanAfterMinutes());
+        // 与改期同一条：加一晚等于多买一晚，nights 与覆盖时长必须跟着重算。
+        // 不加这一步，账单会按"三晚 + 24 小时超时"结算 —— 那正是加时路径的语义
+        PricingFrames.Frames frames = PricingFrames.of(parseSaleType(b.getSaleType()), ctx.type(),
+                after.getStartTime(), after.getEndTime());
+        bookingMapper.resnapshotPricing(bookingId, frames.coveredMinutes(),
+                frames.chargeUnitMinutes(), frames.nights());
+        // 快照刚写过，回读一次让 VO 与日志拿到新的 nights（VO 里带这一列）
+        Booking saved = kernel.require(bookingId);
+        opLog.record("BOOKING_ADD_NIGHT", "booking", bookingId, ctx.property().getId(),
+                String.format("%s %s｜加一晚，离店延到 %s（共 %d 晚）", ctx.room().getRoomNo(),
+                        saved.getBookingNo(), saved.getEndTime(), frames.nights()),
+                snapshot(b), saved);
+        return toVO(saved, ctx);
+    }
+
+    @Transactional
     public BookingVO extend(Long bookingId, ExtendReq req) {
         Booking b = kernel.require(bookingId);
         Ctx ctx = ctx(b.getRoomId());

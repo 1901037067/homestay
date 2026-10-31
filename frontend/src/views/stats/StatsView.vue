@@ -50,10 +50,11 @@
       <div class="bnb-card__head">
         <span class="bnb-card__title">逐营业日：营收与出租率</span>
         <span class="bnb-muted hint">
-          出租率 = 当天卖出去的不同房间数 ÷ 在售房间数（分母是<b>当前</b>在售房间数，
+          出租率 = 当天<b>有房晚</b>的不同房间数 ÷ 在售房间数（分母是<b>当前</b>在售房间数，
           房间下架会让历史出租率跟着变 —— 已知简化）。
-          连住 N 晚的<b>房晚摊到实际住宿的那 N 个营业日</b>，营收与订单数仍归入住那天 ——
-          两者不同日是有意口径，不是数据对不上
+          连住 N 晚的<b>售出房晚摊到预订的那 N 个营业日</b>，营收与订单数仍归入住那天 ——
+          两者不同日是有意口径，不是数据对不上。房晚按<b>卖出去的</b>算而不是实际住了几天：
+          提前退房仍计满原单晚数（不退差价），超时住到第 N+1 晚也不会多计一晚
         </span>
       </div>
       <div ref="trendEl" class="chart" />
@@ -125,7 +126,7 @@ const cards = computed(() => {
   if (!t) return []
   return [
     { label: '已结算营收', value: `¥${Number(t.revenue).toFixed(2)}`, note: `待结算 ${t.pendingBookings} 单` },
-    { label: '平均出租率', value: `${t.avgOccupancy.toFixed(2)}%`, note: `售出 ${t.soldRoomDays} 个房晚（按实际住宿日计）` },
+    { label: '平均出租率', value: `${t.avgOccupancy.toFixed(2)}%`, note: `售出 ${t.soldRoomDays} 个房晚（按预订住宿日计）` },
     { label: '订单数', value: t.bookings, note: `在售房间 ${report.value.sellableRooms} 间` },
     { label: '异常退房', value: t.overstay + t.earlyLeave, note: `超时 ${t.overstay} · 早退 ${t.earlyLeave}` }
   ]

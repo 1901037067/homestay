@@ -135,6 +135,27 @@ class BillingIT extends AbstractMysqlIT {
     }
 
     @Test
+    @DisplayName("连住 60 晚（上限那档）能真的落库 —— detail_json 装得下，不会被 TEXT 截断")
+    void longestAllowedStayFitsInDetailJson() throws Exception {
+        MockHttpSession session = login();
+        Room room = room("388.00", 2, "40.00", 60);
+        long id = booking(session, room, DAY.withHour(14), DAY.plusDays(60).withHour(12), "FULL_DAY");
+        assertThat(bookingMapper.selectById(id).getNights()).isEqualTo(60);
+
+        checkOutAt(session, id, DAY.plusDays(60).withHour(12));
+        JsonNode settled = json(post("/api/bookings/" + id + "/settle").session(session));
+        assertThat(settled.path("code").asInt()).as("上限那档必须能结算成功").isZero();
+
+        // 这一列是 TEXT（64KB）。365 晚约 76KB 会超长，所以上限压到 60 —— 这条测试盯着
+        // "换了上限以后最坏情况还装得下"，也盯着写进去的 JSON 没被截断
+        String detail = jdbc.queryForObject(
+                "select detail_json from bill where booking_id = ?", String.class, id);
+        assertThat(detail.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                .as("60 条明细要远小于 TEXT 的上限").isLessThan(60_000);
+        assertThat(MAPPER.readTree(detail).size()).as("截断的 JSON 解析不出来").isEqualTo(60);
+    }
+
+    @Test
     @DisplayName("改了价不回溯已结算账单 —— 这正是存快照的全部理由")
     void rateChangeDoesNotRewriteHistory() throws Exception {
         MockHttpSession session = login();

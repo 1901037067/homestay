@@ -253,7 +253,8 @@ const editStart = ref('')
 const editEnd = ref('')
 const editError = ref('')
 const form = reactive({
-  room: null, mode: 'hourly', start: '14:00', hours: 3, nights: 1, guest: '', phone: '', requestId: ''
+  room: null, mode: 'hourly', start: '14:00', hours: 3, nights: 1, guest: '', phone: '',
+  anchorDate: null, requestId: ''
 })
 
 // 内容一变就换幂等键。retry 时内容没变 → 同一个键 → 后端回放原单；
@@ -372,8 +373,11 @@ const previewEnd = computed(() => {
   if (!form.room) return null
   const base = parse(date.value)
   if (form.mode === 'fullday') {
+    // 锚点用被点那一格的自然日期，不是所选营业日。切割点 06:00 时点 02:00 那格属于次日，
+    // 用 date.value 会算成"今天 14:00" —— 那个时刻可能已经过去了，前台看到的却是明天入住
+    const anchor = form.anchorDate || base
     const [h, m] = form.room.fullDayStart.split(':').map(Number)
-    const start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, m)
+    const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate(), h, m)
     const [eh, em] = form.room.fullDayEnd.split(':').map(Number)
     // 只有结束时刻不晚于开始时刻才叫"跨午夜"（14:00 → 次日 12:00）。
     // 判据必须和后端 SellPolicy.fullDayRange 一模一样：那边是 end.isAfter(start) ? 当天 : 次日。
@@ -431,12 +435,15 @@ function setMode(mode) {
 /**
  * 加时的话术要按售卖方式分开说。全日房"往后加 24 小时"收的是<b>超时单价</b>，
  * 不是多买一晚 —— 按演示房型算 24×40=960，比正常一晚 388 贵得多。
- * 前台若以为"加一天就是加一晚"，这张账单在柜台上是解释不清的，所以把话摆在弹窗里。
+ *
+ * <p>这里不能再像上一版那样建议"走改期"：改期只接受未入住的单，
+ * 而会点加时的多半已经住进去了，照着提示点只会收到"只有未入住的订单能改期"。
+ * 所以指向「加一晚」——它专门为在住单开了一条写路径。
  */
 const editHint = computed(() => {
   if (editing.value !== 'extend') return '改期会删旧占用行后重新校验'
   return detail.value?.saleType === 'FULL_DAY'
-    ? '加时只能往后推、需重跑冲突检测。全日房加时按超时单价收，不是多买一晚——要多住整晚请走改期或重开一张'
+    ? '加时只能往后推、需重跑冲突检测。全日房加时按超时单价收；要多住一整晚请用「加一晚」，那按该晚的房价算'
     : '加时只能往后推，且需重跑冲突检测'
 })
 
@@ -454,6 +461,9 @@ function onCellClick(room, offset) {
     nights: 1,
     guest: '',
     phone: '',
+    // 被点那一格的真实日期。切割点 06:00 时点 02:00 那格属于"次日"的自然日，
+    // 全日房要从这天起算，不能拿所选营业日的 date.value
+    anchorDate: cellStart(offset),
     requestId: newRequestId()
   })
   formError.value = ''
@@ -507,7 +517,13 @@ function actionsFor(b) {
     ],
     SETTLED: [{ label: '账单', cmd: 'bill', type: 'default' }]
   }
-  return map[b.bookingStatus] || []
+  const acts = map[b.bookingStatus] || []
+  // 全日房多住一整晚走「加一晚」（按该晚自己的价），不走加时（那按超时单价收 24 小时）
+  if (b.saleType === 'FULL_DAY'
+      && (b.bookingStatus === 'CONFIRMED' || b.bookingStatus === 'IN_USE')) {
+    acts.splice(1, 0, { label: '加一晚', cmd: 'add-night', type: 'default' })
+  }
+  return acts
 }
 
 async function run(a) {
@@ -527,14 +543,16 @@ async function run(a) {
     await doSettle()
     return
   }
-  // 取消/退房都会改变占用与账目，点错没有撤销：加一道确认
-  if (a.cmd === 'cancel' || a.cmd === 'check-out') {
+  // 取消/退房/加一晚都会改变占用与账目，点错没有撤销：加一道确认
+  const confirms = {
+    cancel: '取消这张订单？房源会立即释放。',
+    'check-out': '确认给客人办退房？',
+    'add-night': '加一晚会把离店延后一天，并按那一晚的房价计入账单（不是按超时费收）。'
+  }
+  if (confirms[a.cmd]) {
     try {
-      await ElMessageBox.confirm(
-        a.cmd === 'cancel' ? '取消这张订单？房源会立即释放。' : '确认给客人办退房？',
-        '确认' + a.label,
-        { type: 'warning', confirmButtonText: a.label, cancelButtonText: '再想想' }
-      )
+      await ElMessageBox.confirm(confirms[a.cmd], '确认' + a.label,
+        { type: 'warning', confirmButtonText: a.label, cancelButtonText: '再想想' })
     } catch {
       return
     }

@@ -116,6 +116,22 @@ public interface BookingMapper extends BaseMapper<Booking> {
     int settleIfCheckedOut(@Param("id") Long id, @Param("amount") BigDecimal amount);
 
     /**
+     * 加一晚：把 end 往后推一天。
+     *
+     * <p>状态条件写进 where 当裁判 —— 只有还没退房（CONFIRMED / IN_USE）的单能加；
+     * 同时用 {@code end_time = 期望值} 做 CAS，两个加晚请求并发时后一个不能基于过期快照
+     * 把前一个的结果覆盖掉。<b>nights 与计费快照由 service 侧重写</b>，不在这里拼 SQL：
+     * 那条路已经有一套"按区间重算覆盖时长"的纯函数，重复实现就会分叉。
+     */
+    @Update("""
+            update booking set end_time = #{newEnd}
+            where id = #{id} and end_time = #{expectedEnd}
+              and status in ('CONFIRMED', 'IN_USE')
+            """)
+    int addNightIfOpen(@Param("id") Long id, @Param("newEnd") LocalDateTime newEnd,
+                       @Param("expectedEnd") LocalDateTime expectedEnd);
+
+    /**
      * 按 id 当前读。<b>与 {@code selectById} 的区别不是"加不加锁"，而是"读不读缓存"</b>：
      * 同一事务里前面已经 selectById 过一次的话，再查同一个 id 可能直接命中 MyBatis 一级缓存，
      * 拿到加锁之前的旧对象。凡是要基于"锁内最新状态"下判断的地方，都走这一个。

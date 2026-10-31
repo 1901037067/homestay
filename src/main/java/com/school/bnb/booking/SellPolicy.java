@@ -22,8 +22,15 @@ public final class SellPolicy {
     /** 相邻两晚模板起点的间隔。全链路 naive 本地时间、无夏令时，所以恒等于 24 小时。 */
     private static final int DAY_MINUTES = 24 * 60;
 
-    /** 一次登记的连住上限。前端也限到 60，但 API 是公开面，不能只靠前端拦。 */
-    private static final int MAX_FULL_DAY_NIGHTS = 365;
+    /**
+     * 一次登记的连住上限。<b>和前端控件是同一个数</b>，两边各说一套只会让人以为能订 365 晚。
+     *
+     * <p>为什么是 60 而不是 365，还有一条硬理由：`bill.detail_json` 是 MySQL TEXT（约 64KB），
+     * 而多晚账单是一晚一条起步明细。实测一条明细约 200 字节，365 晚约 76KB —— 超过列上限，
+     * 严格模式下插入直接失败、非严格模式会截断成读不回来的坏 JSON。60 晚约 12KB，余量充足。
+     * 真要住更久，拆单本来也是更好的做法：中途改价、分段结算都更好处理。
+     */
+    public static final int MAX_FULL_DAY_NIGHTS = 60;
 
     /** 一次判定需要的全部输入，由调用方从房间/房型/民宿三张表取出后传进来。 */
     public record Rule(

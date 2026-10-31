@@ -195,7 +195,8 @@ class StatsIT extends AbstractMysqlIT {
 
         String csv = new String(body, StandardCharsets.UTF_8);
         assertThat(csv).as("没有 BOM 的话 Excel 会按 GBK 读，中文全乱").startsWith("\uFEFF");
-        assertThat(csv).contains("营业日,可售房间,售出房间,出租率%,已结算营收,待结算单数");
+        // 这一列是"房晚"不是"售出房间数"：连住 N 晚会记 N 次，表头必须说清
+        assertThat(csv).contains("营业日,可售房间,售出房晚,出租率%,已结算营收,待结算单数");
         assertThat(csv).contains("2026-11-10,2,1,50.00,148.00,0,1,0,0");
         assertThat(csv).contains("合计,2,1,50.00,148.00,0,1,0,0");
         assertThat(csv).contains("day_cut_time");
