@@ -37,6 +37,9 @@
               <el-dropdown-item command="settings">
                 <el-icon><Setting /></el-icon>设置
               </el-dropdown-item>
+              <el-dropdown-item command="password">
+                <el-icon><User /></el-icon>修改密码
+              </el-dropdown-item>
               <el-dropdown-item command="logout" divided>
                 <el-icon><SwitchButton /></el-icon>退出登录
               </el-dropdown-item>
@@ -61,11 +64,34 @@
     </main>
 
     <SettingsDialog v-model="settings" />
+
+    <!-- 改自己的密码：任何账号都能用，店长重置别人走「账号」页 -->
+    <el-dialog v-model="pwDlg" title="修改密码" width="400">
+      <el-form label-position="top">
+        <el-form-item label="当前密码" required>
+          <el-input v-model="pwForm.oldPassword" type="password" show-password
+                    autocomplete="current-password" />
+        </el-form-item>
+        <el-form-item label="新密码（至少 8 位）" required>
+          <el-input v-model="pwForm.newPassword" type="password" show-password
+                    autocomplete="new-password" />
+        </el-form-item>
+        <el-form-item label="再输一次" required>
+          <el-input v-model="pwForm.confirm" type="password" show-password
+                    autocomplete="new-password" @keyup.enter="submitPassword" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwDlg = false">取消</el-button>
+        <el-button type="primary" :loading="pwBusy" @click="submitPassword">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   House, Grid, Tickets, Ticket, OfficeBuilding, ArrowDown, SwitchButton, Calendar, Document,
@@ -122,10 +148,42 @@ onMounted(async () => {
 async function onCommand(cmd) {
   if (cmd === 'settings') {
     settings.value = true
+  } else if (cmd === 'password') {
+    openPassword()
   } else if (cmd === 'logout') {
     await http.get('/logout')
     localStorage.removeItem('bnb_user')
     router.push('/login')
+  }
+}
+
+const pwDlg = ref(false)
+const pwBusy = ref(false)
+const pwForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
+
+/** 每次打开都清空：密码不该在内存里留到下一次。 */
+function openPassword() {
+  Object.assign(pwForm, { oldPassword: '', newPassword: '', confirm: '' })
+  pwDlg.value = true
+}
+
+async function submitPassword() {
+  if (pwForm.newPassword !== pwForm.confirm) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  pwBusy.value = true
+  try {
+    await http.post('/me/password', {
+      oldPassword: pwForm.oldPassword,
+      newPassword: pwForm.newPassword
+    })
+    ElMessage.success('密码已修改，下次登录请用新密码')
+    pwDlg.value = false
+  } catch {
+    // 拦截器已经弹过错误；不清空表单，让用户改一个字段重试
+  } finally {
+    pwBusy.value = false
   }
 }
 </script>

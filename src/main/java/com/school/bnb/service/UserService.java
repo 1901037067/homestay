@@ -5,6 +5,7 @@ import com.school.bnb.common.AccessScope;
 import com.school.bnb.common.AuthContext;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
+import com.school.bnb.dto.ChangePasswordReq;
 import com.school.bnb.dto.UserReq;
 import com.school.bnb.entity.SysUser;
 import com.school.bnb.mapper.SysUserMapper;
@@ -136,6 +137,43 @@ public class UserService {
                 UserVO.of(existing, propertyName(existing.getPropertyId())),
                 UserVO.of(saved, propertyName(saved.getPropertyId())));
         return UserVO.of(saved, propertyName(saved.getPropertyId()));
+    }
+
+    /**
+     * 改<b>自己</b>的密码。任何登录账号都能用，包括前台。
+     *
+     * <p>与 {@link #save} 分开：那条是店长编辑别人，开头就是 {@code requireManager()}；
+     * 而"改自己密码"是最普通的能力，不该要求店长权限。两者共用同一个编码器与同一个最短长度。
+     *
+     * <p>不校验"旧密码"就等于谁拿到一个打开的浏览器就能换掉密码 —— 所以旧密码必验。
+     * 也不允许新旧相同：那等于没改，但会让操作人多一次"我改了"的错觉。
+     */
+    @Transactional
+    public void changeMyPassword(ChangePasswordReq req) {
+        Long me = AuthContext.currentUserId();
+        if (me == null) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "未登录");
+        }
+        SysUser user = userMapper.selectById(me);
+        if (user == null) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "账号不存在");
+        }
+        if (!encoder.matches(req.oldPassword(), user.getPasswordHash())) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "原密码不正确");
+        }
+        if (req.newPassword().length() < MIN_PASSWORD) {
+            throw new BizException(ErrorCode.BAD_REQUEST,
+                    "新密码至少 " + MIN_PASSWORD + " 位，收到 " + req.newPassword().length() + " 位");
+        }
+        if (req.newPassword().equals(req.oldPassword())) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "新密码不能与原密码相同");
+        }
+        SysUser patch = new SysUser();
+        patch.setId(me);
+        // updateById 默认跳过 null 字段：这一条只写 password_hash，别的列不会被动
+        patch.setPasswordHash(encoder.encode(req.newPassword()));
+        userMapper.updateById(patch);
+        opLog.record("USER_PASSWORD_CHANGE", "sys_user", me, null, "修改自己的密码", null, null);
     }
 
     /** 角色不单独存列，一律由"归属哪间民宿"派生 —— 日志里也要按同一口径说清楚。 */

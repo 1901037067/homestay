@@ -3,8 +3,10 @@ package com.school.bnb.controller;
 import com.school.bnb.common.AuthContext;
 import com.school.bnb.common.LoginInterceptor;
 import com.school.bnb.common.R;
+import com.school.bnb.dto.ChangePasswordReq;
 import com.school.bnb.dto.LoginReq;
 import com.school.bnb.service.AuthService;
+import com.school.bnb.service.UserService;
 import com.school.bnb.vo.MeVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -23,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService authService;
+    private final UserService userService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, UserService userService) {
         this.authService = authService;
+        this.userService = userService;
     }
 
     @Operation(summary = "登录")
@@ -54,5 +58,13 @@ public class AuthController {
     @GetMapping("/me")
     public R<MeVO> me() {
         return R.ok(authService.toMe(AuthContext.current()));
+    }
+
+    @Operation(summary = "改自己的密码",
+            description = "任何登录账号都能改自己的，需验旧密码；店长重置别人的走 PUT /api/users/{id}")
+    @PostMapping("/me/password")
+    public R<Void> changePassword(@Valid @RequestBody ChangePasswordReq req) {
+        userService.changeMyPassword(req);
+        return R.ok();
     }
 }

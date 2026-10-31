@@ -26,6 +26,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -301,6 +303,38 @@ class AuthScopeIT extends AbstractMysqlIT {
         assertThat(after.getId())
                 .as("登录前后的 session id 必须不同")
                 .isNotEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("登录成功与失败都进审计；摘要分得清三种失败，但密码一个字都不记")
+    void loginAttemptsAreAudited() throws Exception {
+        login("admin");
+        String bogusPw = "definitely-wrong-" + System.nanoTime();
+        mockMvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"admin\",\"password\":\"" + bogusPw + "\"}"))
+                .andExpect(status().isOk());
+
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "select action, summary, user_id from operation_log "
+                        + "where entity = 'user' and username = 'admin' order by id desc limit 2");
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).get("action")).isEqualTo("LOGIN_FAILED");
+        assertThat((String) rows.get(0).get("summary"))
+                .as("审计页要能和撞库区分开，但绝不能把密码写进去")
+                .contains("密码错误").doesNotContain(bogusPw);
+        assertThat(rows.get(1).get("action")).isEqualTo("LOGIN_SUCCESS");
+        assertThat(rows.get(1).get("user_id")).as("成功那行要带上账号 id").isNotNull();
+
+        // 账号不存在也要留痕：user_id 为空（还没有这个账号），但尝试的用户名必须在
+        String ghost = "ghost" + System.nanoTime();
+        mockMvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"" + ghost + "\",\"password\":\"whatever\"}"))
+                .andExpect(status().isOk());
+        Map<String, Object> miss = jdbc.queryForMap(
+                "select action, summary, user_id from operation_log where username = ? order by id desc limit 1",
+                ghost);
+        assertThat((String) miss.get("summary")).contains("账号不存在");
+        assertThat(miss.get("user_id")).isNull();
     }
 
     // ---------------------------------------------------------------- 夹具

@@ -100,6 +100,10 @@ const ACTIONS = [
   { value: 'BOOKING_CANCEL', label: '取消' },
   { value: 'CLEANING_DONE', label: '清扫完成' },
   { value: 'BOOKING_SETTLE', label: '结算' },
+  // 登录审计：成功与失败都留痕，失败那条的摘要会写清是"账号不存在 / 密码错误 / 已停用"
+  { value: 'LOGIN_SUCCESS', label: '登录成功' },
+  { value: 'LOGIN_FAILED', label: '登录失败' },
+  { value: 'USER_PASSWORD_CHANGE', label: '改自己的密码' },
   // 改价会直接改变账单金额，是最该被审计的动作之一
   { value: 'ROOM_TYPE_CREATE', label: '新建房型' },
   { value: 'ROOM_TYPE_UPDATE', label: '房型改价' },

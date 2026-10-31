@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.school.bnb.common.BizException;
 import com.school.bnb.common.ErrorCode;
+import com.school.bnb.dto.ChangePasswordReq;
 import com.school.bnb.dto.UserReq;
 import com.school.bnb.service.UserService;
 import org.junit.jupiter.api.DisplayName;
@@ -57,6 +58,14 @@ class UserAdminIT extends AbstractMysqlIT {
 
     private int code(MockHttpSession session, String url) throws Exception {
         return json.readTree(mockMvc.perform(get(url).session(session))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .path("code").asInt();
+    }
+
+    private int changePw(MockHttpSession session, String oldPw, String newPw) throws Exception {
+        return json.readTree(mockMvc.perform(post("/api/me/password").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(new ChangePasswordReq(oldPw, newPw))))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
                 .path("code").asInt();
     }
@@ -162,6 +171,28 @@ class UserAdminIT extends AbstractMysqlIT {
         assertThat(saveUser(created.id(), new UserReq(created.id(), username, "启用测试-改名", null, P1, true)))
                 .isZero();
         assertThat(loginCode(username, "Admin@123")).isZero();
+    }
+
+    @Test
+    @DisplayName("自助改密码：验旧密码、最短长度、不与原密码相同；改完旧密码立刻失效")
+    void changeOwnPassword() throws Exception {
+        String username = "self" + System.nanoTime();
+        userService.save(new UserReq(null, username, "自助改密", "Admin@123", P1, true));
+        MockHttpSession session = login(username);
+
+        assertThat(changePw(session, "wrong-old", "NewPass@2026"))
+                .as("旧密码不对必须拒 —— 否则谁碰到一个开着的浏览器就能换掉密码")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        assertThat(changePw(session, "Admin@123", "short")).isEqualTo(ErrorCode.BAD_REQUEST);
+        assertThat(changePw(session, "Admin@123", "Admin@123")).isEqualTo(ErrorCode.BAD_REQUEST);
+
+        assertThat(changePw(session, "Admin@123", "NewPass@2026")).isZero();
+        assertThat(loginCode(username, "Admin@123")).isEqualTo(ErrorCode.LOGIN_FAILED);
+        assertThat(loginCode(username, "NewPass@2026")).isZero();
+
+        assertThat(jdbc.queryForObject("select count(1) from operation_log "
+                        + "where action = 'USER_PASSWORD_CHANGE' and username = ?", Integer.class, username))
+                .as("改自己的密码也是审计动作，跨店所以 property_id 为空").isEqualTo(1);
     }
 
     @Test

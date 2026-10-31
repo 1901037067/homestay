@@ -33,6 +33,33 @@ public class OperationLogService {
     }
 
     /**
+     * 登录审计。和 {@link #record} 分开，是因为<b>操作人不能从 AuthContext 取</b> ——
+     * 登录这条路径上它还空着（拦截器是在登录成功之后才写）。
+     *
+     * <p>失败的尝试也记，并且记<b>尝试登录的那个用户名</b>：审计要回答的是"谁在试"。
+     * 摘要里区分"账号不存在 / 密码错误 / 账号已停用"，这三者对店长的处置完全不同
+     * （被撞库、记错密码、有人拿已停用的号在试）；<b>对外仍统一回"用户名或密码错误"</b>，
+     * 不在接口上泄露账号是否存在。
+     *
+     * <p>登录是跨店动作，{@code property_id} 留 null，只有店长在审计页看得到。
+     */
+    public void recordAuth(String action, Long userId, String username, String summary) {
+        try {
+            OperationLog row = new OperationLog();
+            row.setUserId(userId);
+            row.setUsername(username);
+            row.setAction(action);
+            row.setEntity("user");
+            row.setEntityId(userId);
+            row.setPropertyId(null);
+            row.setSummary(summary);
+            mapper.insert(row);
+        } catch (Exception e) {
+            log.warn("写登录审计失败 action={} user={}", action, username, e);
+        }
+    }
+
+    /**
      * @param propertyId 这条动作归属的民宿。摘要里带房号与客人姓名，所以它本身就是民宿数据；
      *                   跨店/系统级动作（登录、账号管理）传 null，只有店长能在审计页看到那些。
      */

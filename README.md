@@ -223,6 +223,7 @@ GET  /api/stats/report           ?propertyId&from&to   指标卡 + 日序列 + �
 GET  /api/stats/export           ?propertyId&from&to   导出 CSV（UTF-8 BOM，Excel 直接打开）
 GET  /api/operation-logs          ?page&size&action&entity&entityId&username
 GET  /api/users            账号列表（店长专属）  POST / PUT /{id}   建号与改号，只有停用没有删除
+POST /api/me/password      改自己的密码（任何账号都能用，需验旧密码）
 ```
 
 `/api/calendar` 的 `propertyId` 是必填：前台一次只看一家店，而营业日切割点是按店配置的，
@@ -477,8 +478,8 @@ mvn -B test
 | 测试 | 证明什么 |
 |---|---|
 | `FlywaySchemaIT` | 迁移真的建出**9 张** InnoDB/utf8mb4 表（精确集合，多一张少一张都红）；10 个外键精确齐备；`uk_booking_kind` 两列、`uk_booking_bill` 单列唯一；`idx_block` 列序正确；`LocalDateTime` 经 JDBC **真写再真读**回一致（不只是比对 SQL 字面量） |
-| `AuthScopeIT` | 11 条，走 MockMvc + 两个真实 session，覆盖形状是"本店/别店 × 列表/详情/新增/修改/删除/账单/导出"：**店长看全部门店、前台只看自己那一家**；前台点名请求别家店的房间/日历/报表/可售 → 1003（不是悄悄给空列表）；不带参数时自动收窄且列表里确实没有别家店的数据；**给别家店的房开单被拒、给自己店的照常成功**；**按 id 读详情也越不了界**（房间、订单、以及"已结算读快照"那条不经过 preview 的分支）；**PUT 路径给别店 id + 请求体给本店归属改不动**，并且回查库里 `property_id` 没被搬走；操作日志按民宿隔离（店长那份仍是全量）；账号页读写 1003；停用即时踢掉在线 session；**登录成功必须换 sessionId**（会话固定） |
-| `UserAdminIT` | 8 条：店长建的前台账号能登录且范围 = 绑定民宿；不绑民宿的账号是店长；重名 1004、密码太短 400、**列表 JSON 不含 password_hash**；编辑时不传密码 = 原密码仍可用、传了才重置；**编辑时省略 `enabled` 必须保持停用状态**（回落成"启用"会把停用账号悄悄放回来）；**不能停用自己、不能让店长归零**；**清空归属升店长必须真的把库里 `property_id` 写成 NULL**（MyBatis-Plus 默认跳过 null，接口会假成功）；**两个店长并发互相降级只能成一个**（`SELECT ... FOR UPDATE` 把 check-then-act 串起来） |
+| `AuthScopeIT` | 12 条，走 MockMvc + 两个真实 session，覆盖形状是"本店/别店 × 列表/详情/新增/修改/删除/账单/导出"：**店长看全部门店、前台只看自己那一家**；前台点名请求别家店的房间/日历/报表/可售 → 1003（不是悄悄给空列表）；不带参数时自动收窄且列表里确实没有别家店的数据；**给别家店的房开单被拒、给自己店的照常成功**；**按 id 读详情也越不了界**（房间、订单、以及"已结算读快照"那条不经过 preview 的分支）；**PUT 路径给别店 id + 请求体给本店归属改不动**，并且回查库里 `property_id` 没被搬走；操作日志按民宿隔离（店长那份仍是全量）；账号页读写 1003；停用即时踢掉在线 session；**登录成功必须换 sessionId**（会话固定）；**登录成功与失败都进审计**（摘要分得清"账号不存在/密码错误/已停用"，但一个字的密码都不记） |
+| `UserAdminIT` | 9 条：店长建的前台账号能登录且范围 = 绑定民宿；不绑民宿的账号是店长；重名 1004、密码太短 400、**列表 JSON 不含 password_hash**；编辑时不传密码 = 原密码仍可用、传了才重置；**编辑时省略 `enabled` 必须保持停用状态**（回落成"启用"会把停用账号悄悄放回来）；**自助改密码**（验旧密码、最短长度、不与原密码相同，改完旧密码立刻失效且留审计）；**不能停用自己、不能让店长归零**；**清空归属升店长必须真的把库里 `property_id` 写成 NULL**（MyBatis-Plus 默认跳过 null，接口会假成功）；**两个店长并发互相降级只能成一个**（`SELECT ... FOR UPDATE` 把 check-then-act 串起来） |
 | `BookingKernelIT` | **直接调内核**的边界用例：并发抢同一时段恰好一单成功；边界相接不算冲突；45 分钟清扫缓冲能挡住近邻单；跨零点占用覆盖次日上午；取消即删占用行并可再售；**反向对照：不走行锁时数据库自己不拦两个重叠区间**；非法区间被拒。<br>⚠ 它只覆盖内核那一层 —— 内核里 `FOR UPDATE` 恰好是事务第一条语句，所以快照问题测不出来。真实入口由下面两个类覆盖 |
 | `OversellAuditIT` | 4 条，一组对照实验：① RR 下"锁后普通 SELECT"确实读到旧快照并超卖（机制）；② 同样的交错换成当前读就看不到冲突不存在（**证明解药是当前读**）；③ 真实入口 `BookingService.create` 并发 12 轮零超卖（回归防线）；④ 同一 `requestId` 重复提交返回原单 |
 | `OversellUnderRepeatableReadIT` | 把连接池隔离级别**强行改回 RR** 再跑真实入口并发 12 轮。过 —— 说明修复不依赖 READ COMMITTED 配置 |
@@ -498,7 +499,7 @@ mvn -B test
 | `OversellWithoutLockIT` | **反向对照**：`@SpyBean` 把 `lockOverlapping` 换成普通 `countOverlap`、隔离级别强行拉回 RR，其余不动 → 断言"必须出现超卖"。它若变绿在没有超卖，说明对照失效，正向的"零超卖"也就不再证明任何事 |
 | `SeedPasswordHashTest` | V2 里的 admin 哈希能被 `BCryptPasswordEncoder` 验通（与登录校验同源） |
 
-全量 **206 条**（2026-10-31 实测）。其中一条例外要说清楚：`OccupancyTruthIT` 的
+全量 **208 条**（2026-10-31 实测）。其中一条例外要说清楚：`OccupancyTruthIT` 的
 "清扫窗口被截断时日志写实际分钟数"依赖**真实退房时刻**（`BookingService.checkOut` 取 `now()`），
 夹具全部相对 `now()` 排布，本地 21:00–03:59 跑会造出跨天的钟点单，于是用 `Assumptions` 主动跳过。
 跳过的表现是 `Tests run` 仍是 200、`Skipped` 从 0 变 1（实测），构建照样成功 ——
@@ -507,7 +508,7 @@ mvn -B test
 当前判断不值得。
 
 **覆盖率**由 `jacoco-maven-plugin` 跟着 `mvn test` 一起产出（`target/site/jacoco/`，CI 作为 artifact 上传）。
-2026-10-31 实测：**行 90.1% / 分支 72.8% / 方法 87.4% / 类 98.9%**。
+2026-10-31 实测：**行 90.1% / 分支 73.2% / 方法 87.8% / 类 98.9%**。
 一个容易静默踩空的点：pom 里 surefire 的 `argLine` 必须写成 `@{argLine} ...` —— `@{}` 是后期绑定，
 而 `${}` 在 surefire 读配置时就求值了，那时 JaCoCo agent 还没生成，等于把插桩整段覆盖掉、覆盖率全零且不报错。
 
